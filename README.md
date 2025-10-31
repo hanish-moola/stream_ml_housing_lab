@@ -101,7 +101,7 @@ Evaluation logs metrics back to the same MLflow experiment and produces plots un
 ### 3. Serve Predictions via FastAPI
 
 ```bash
-# Load latest local artefact
+# Load latest local artefact (after training)
 uvicorn src.serving.app:app --reload
 
 # Or point to a specific model directory / MLflow URI
@@ -113,6 +113,27 @@ Endpoints:
 - `GET /health` – readiness signal with current model version
 - `GET /model-info` – feature order, categorical config, source metadata
 - `POST /predict` – accepts housing features, returns `estimated_price`
+
+Example request:
+
+```bash
+curl -X POST http://127.0.0.1:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "area": 3500,
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "stories": 2,
+    "parking": 1,
+    "mainroad": "yes",
+    "guestroom": "no",
+    "basement": "no",
+    "hotwaterheating": "no",
+    "airconditioning": "yes",
+    "prefarea": "no",
+    "furnishingstatus": "semi-furnished"
+  }'
+```
 
 ### 4. Stream Raw Events into Kafka (Prototype)
 
