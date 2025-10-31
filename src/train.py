@@ -18,6 +18,12 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from xgboost import XGBRegressor
 
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path for `config` and `utils` imports when running via `uv run`
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from config import (
     CATEGORICAL_COLUMNS,
     DATA_PATH,
