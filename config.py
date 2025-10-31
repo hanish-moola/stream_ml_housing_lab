@@ -1,7 +1,6 @@
-"""
-Configuration file for housing price prediction project.
-Centralizes all paths, hyperparameters, and experiment settings.
-"""
+"""Configuration for the Stream-ML-Housing-Lab project."""
+
+from __future__ import annotations
 
 import os
 from pathlib import Path
@@ -9,76 +8,49 @@ from pathlib import Path
 # Project paths
 PROJECT_ROOT = Path(__file__).parent
 DATA_DIR = PROJECT_ROOT / "data"
-MODELS_DIR = PROJECT_ROOT / "models"
 RESULTS_DIR = PROJECT_ROOT / "results"
 MLFLOW_DIR = PROJECT_ROOT / "mlruns"
 
-# Create directories if they don't exist
-for directory in [DATA_DIR, MODELS_DIR, RESULTS_DIR, MLFLOW_DIR]:
+for directory in [DATA_DIR, RESULTS_DIR, MLFLOW_DIR]:
     directory.mkdir(exist_ok=True)
 
 # Data configuration
-DATA_PATH = os.getenv("HOUSING_DATA_PATH", "/kaggle/input/housing-prices-dataset/Housing.csv")
+DATA_PATH = os.getenv("HOUSING_DATA_PATH", DATA_DIR / "Housing.csv")
 TARGET_COLUMN = "price"
 
-# Categorical columns to encode
 CATEGORICAL_COLUMNS = [
-    'mainroad',
-    'guestroom',
-    'basement',
-    'hotwaterheating',
-    'airconditioning',
-    'prefarea',
-    'furnishingstatus'
+    "mainroad",
+    "guestroom",
+    "basement",
+    "hotwaterheating",
+    "airconditioning",
+    "prefarea",
+    "furnishingstatus",
 ]
 
-# Numerical columns for visualization
-NUMERICAL_COLUMNS = ['price', 'area', 'bedrooms', 'bathrooms', 'stories', 'parking']
+# Columns prone to high cardinality that we drop from the baseline pipeline
+EXCLUDE_COLUMNS = ["Address"]
 
-# Model configuration
+# Experiment settings
 RANDOM_STATE = 100
 TEST_SIZE = 0.2
-VALIDATION_SIZE = 0.2  # For train/val/test split if needed
 
-# Hyperparameter tuning configuration
-HYPERPARAMETER_CONFIG = {
-    'max_trials': 10,
-    'executions_per_trial': 3,
-    'epochs': 10,
-    'objective': 'val_loss',
-    'directory': str(PROJECT_ROOT / 'hyperparameter_tuning'),
-    'project_name': 'housing_price_prediction'
+# Baseline XGBoost configuration for the regression task
+XGBOOST_PARAMS = {
+    "n_estimators": 500,
+    "learning_rate": 0.05,
+    "max_depth": 6,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "random_state": RANDOM_STATE,
+    "tree_method": "hist",
 }
 
-# Model architecture hyperparameter search space
-HYPERPARAMETER_SEARCH_SPACE = {
-    'units1': {'min_value': 32, 'max_value': 512, 'step': 32},
-    'units2': {'min_value': 32, 'max_value': 512, 'step': 32},
-    'activation1': {'values': ['relu', 'tanh', 'sigmoid']},
-    'activation2': {'values': ['relu', 'tanh', 'sigmoid']},
-    'learning_rate': {'values': [1e-2, 1e-3, 1e-4]}
-}
-
-# Training configuration
-TRAINING_CONFIG = {
-    'epochs': 50,
-    'batch_size': 32,
-    'verbose': 1
-}
+MODEL_REGISTRY_NAME = "housing_price_predictor"
 
 # MLflow configuration
 MLFLOW_CONFIG = {
-    'experiment_name': 'housing_price_prediction',
-    'tracking_uri': f"file:{MLFLOW_DIR}",
-    'run_name': None  # Will be set dynamically with timestamp
+    "experiment_name": "housing_price_prediction",
+    "tracking_uri": f"file:{MLFLOW_DIR}",
 }
-
-# Evaluation metrics to track
-EVALUATION_METRICS = [
-    'mean_absolute_error',
-    'mean_squared_error',
-    'root_mean_squared_error',
-    'root_mean_squared_log_error',
-    'r2_score'
-]
-
