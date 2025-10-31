@@ -1,3 +1,175 @@
+"""
+FastAPI app to serve offline-trained housing price prediction model.
+"""
+
+import os
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, field_validator
+
+# Project config
+from config import RESULTS_DIR, TARGET_COLUMN, CATEGORICAL_COLUMNS
+
+
+class PredictRequest(BaseModel):
+    area: float
+    bedrooms: int
+    bathrooms: float
+    stories: int
+    parking: int
+    mainroad: str
+    guestroom: str
+    basement: str
+    hotwaterheating: str
+    airconditioning: str
+    prefarea: str
+    furnishingstatus: str
+
+    @field_validator(
+        "mainroad",
+        "guestroom",
+        "basement",
+        "hotwaterheating",
+        "airconditioning",
+        "prefarea",
+        mode="before",
+    )
+    @classmethod
+    def normalize_yes_no(cls, v: Any) -> str:
+        if isinstance(v, str):
+            val = v.strip().lower()
+            if val in {"y", "yes", "true", "1"}:  # normalize to yes/no
+                return "yes"
+            if val in {"n", "no", "false", "0"}:
+                return "no"
+            return val
+        return v
+
+
+class PredictResponse(BaseModel):
+    estimated_price: float
+    model_path: Optional[str] = None
+
+
+def _find_latest_model_dir() -> Path:
+    models_root = RESULTS_DIR / "models"
+    if not models_root.exists():
+        raise FileNotFoundError("No models directory found under results/models")
+    candidates = sorted(
+        models_root.glob("*/model.keras"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        raise FileNotFoundError("No saved model found (expected results/models/<run>/model.keras)")
+    return candidates[0].parent
+
+
+def _load_artifacts(model_dir: Path) -> Dict[str, Any]:
+    model_file = model_dir / "model.keras"
+    scaler_file = model_dir / "scaler.pkl"
+    feature_names_file = model_dir / "feature_names.txt"
+
+    if not model_file.exists():
+        raise FileNotFoundError(f"Model file not found: {model_file}")
+
+    model = tf.keras.models.load_model(str(model_file))
+
+    scaler = None
+    if scaler_file.exists():
+        import pickle
+
+        with open(scaler_file, "rb") as f:
+            scaler = pickle.load(f)
+
+    feature_names: Optional[List[str]] = None
+    if feature_names_file.exists():
+        with open(feature_names_file, "r") as f:
+            feature_names = [line.strip() for line in f.readlines() if line.strip()]
+
+    return {"model": model, "scaler": scaler, "feature_names": feature_names}
+
+
+def _build_feature_frame(payload: PredictRequest, feature_names: List[str]) -> pd.DataFrame:
+    # Convert request to DataFrame
+    df = pd.DataFrame([payload.dict()])
+    # One-hot encode categorical columns to mirror training
+    encoded = pd.get_dummies(df, columns=CATEGORICAL_COLUMNS, drop_first=False)
+    # Align columns to training order
+    encoded_aligned = encoded.reindex(columns=feature_names, fill_value=0)
+    return encoded_aligned
+
+
+def _transform_features(X: pd.DataFrame, scaler) -> np.ndarray:
+    if scaler is None:
+        return X.values
+    return scaler.transform(X)
+
+
+app = FastAPI(title="Housing Price Prediction API", version="0.1.0")
+
+
+# Load model at startup
+_MODEL_DIR: Optional[Path] = None
+_MODEL = None
+_SCALER = None
+_FEATURE_NAMES: Optional[List[str]] = None
+
+
+@app.on_event("startup")
+def load_model_startup():
+    global _MODEL_DIR, _MODEL, _SCALER, _FEATURE_NAMES
+    model_path_env = os.getenv("HOUSING_MODEL_PATH")
+    model_dir = Path(model_path_env) if model_path_env else _find_latest_model_dir()
+    artifacts = _load_artifacts(model_dir)
+
+    _MODEL_DIR = model_dir
+    _MODEL = artifacts["model"]
+    _SCALER = artifacts.get("scaler")
+    _FEATURE_NAMES = artifacts.get("feature_names")
+
+    if not _FEATURE_NAMES:
+        raise RuntimeError("Feature names not found; required to align inference features with training.")
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "model_loaded": _MODEL is not None,
+        "model_dir": str(_MODEL_DIR) if _MODEL_DIR else None,
+    }
+
+
+@app.get("/model-info")
+def model_info():
+    if _MODEL is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    return {
+        "model_dir": str(_MODEL_DIR),
+        "num_features": len(_FEATURE_NAMES) if _FEATURE_NAMES else 0,
+        "categorical_columns": CATEGORICAL_COLUMNS,
+        "target": TARGET_COLUMN,
+    }
+
+
+@app.post("/predict", response_model=PredictResponse)
+def predict(req: PredictRequest):
+    if _MODEL is None or _FEATURE_NAMES is None:
+        raise HTTPException(status_code=503, detail="Model not ready")
+    try:
+        X_frame = _build_feature_frame(req, _FEATURE_NAMES)
+        X_scaled = _transform_features(X_frame, _SCALER)
+        y_pred = _MODEL.predict(X_scaled, verbose=0).ravel()[0]
+        return PredictResponse(estimated_price=float(y_pred), model_path=str(_MODEL_DIR))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Prediction failed: {e}")
+
 """FastAPI service for real-time housing price prediction."""
 
 from __future__ import annotations
