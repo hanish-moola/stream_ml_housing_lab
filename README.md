@@ -1,199 +1,158 @@
-# Housing Price Prediction with Neural Networks
+# Stream-ML Housing Lab
 
-A machine learning project for predicting housing prices using deep learning, with MLflow integration for experiment tracking and model management.
+A production-minded playground for housing price prediction. The lab now ships with a shared feature
+pipeline, an XGBoost regression model tracked in MLflow, a FastAPI inference surface, and Kafka-ready
+streaming primitives to move towards near-real-time predictions and agentic stress testing.
 
 ## Project Structure
 
 ```
 stream_ml_housing_lab/
-├── config.py                 # Configuration parameters
-├── requirements.txt          # Python dependencies
-├── README.md                # This file
-├── notebook_parv_soni.ipynb # Original notebook
-├── src/                     # Main execution scripts
-│   ├── __init__.py
-│   ├── train.py            # Training script with MLflow
-│   └── evaluate.py         # Evaluation script with MLflow
-├── utils/                   # Utility modules
-│   ├── __init__.py
-│   ├── data_loader.py       # Data loading utilities
-│   ├── preprocessing.py    # Data preprocessing pipeline
-│   ├── visualization.py    # Visualization functions
-│   └── model_builder.py    # Model architecture and hyperparameter tuning
-├── data/                    # Data directory (created automatically)
-├── models/                  # Saved models (created automatically)
-├── results/                 # Results and visualizations (created automatically)
-└── mlruns/                  # MLflow tracking data (created automatically)
+├── config.py                # Central configuration for data paths, model params, MLflow
+├── requirements.txt         # Python dependencies
+├── src/
+│   ├── train.py             # Offline training entrypoint (MLflow + XGBoost pipeline)
+│   ├── evaluate.py          # Offline evaluation wired into MLflow
+│   ├── serving/             # FastAPI app + request/response schemas
+│   └── streaming/           # Kafka producer + Faust feature processor skeleton
+├── utils/
+│   ├── data_loader.py       # Data ingestion helpers
+│   ├── feature_pipeline.py  # Shared feature transformer utilities
+│   ├── metrics.py           # Regression metrics helpers
+│   ├── pipeline_loader.py   # Centralised pipeline loading helpers
+│   └── visualization.py     # Exploratory and diagnostic plots
+├── results/                 # Model artefacts, visualisations, evaluation reports
+├── mlruns/                  # Local MLflow tracking store
+└── data/                    # Default data drop (created on demand)
 ```
 
-## Features
+## What's New in This Iteration
 
-- **Modular Design**: Separated concerns with dedicated utility modules
-- **MLflow Integration**: Complete experiment tracking, model versioning, and artifact logging
-- **Hyperparameter Tuning**: Automated hyperparameter search using Keras Tuner
-- **Comprehensive Evaluation**: Multiple regression metrics with detailed analysis
-- **Visualization Pipeline**: Automated generation of EDA plots and prediction visualizations
-- **Reproducibility**: Fixed random seeds and versioned configurations
+- **Unified Feature Pipeline** – ColumnTransformer with scaling + one-hot encoding shared across training,
+  evaluation, serving, and streaming to guarantee parity.
+- **XGBoost Baseline** – Replaces the Keras network with an XGBoost regressor logged via `mlflow.sklearn`
+  and versioned in the registry.
+- **FastAPI Inference Service** – `src/serving/app.py` exposes `/predict`, `/health`, and `/model-info`
+  endpoints and loads the latest pipeline automatically (local artefact or MLflow URI).
+- **Kafka Streaming Skeleton** – `src/streaming/producer.py` streams raw housing events while
+  `src/streaming/feature_processor.py` (Faust) converts them into model-ready feature vectors and
+  predictions.
+- **Lean Dependencies** – Requirements trimmed to the current stack plus the new serving/streaming libs.
 
-## Installation
+## Setup
 
-1. Clone the repository:
 ```bash
-cd stream_ml_housing_lab
-```
-
-2. Create a virtual environment (recommended):
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
+python3 -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Configuration
-
-Edit `config.py` to customize:
-- Data paths
-- Model hyperparameters
-- Training parameters
-- MLflow experiment settings
-
-Key configuration options:
-- `DATA_PATH`: Path to your housing dataset CSV file
-- `HYPERPARAMETER_CONFIG`: Settings for hyperparameter tuning
-- `TRAINING_CONFIG`: Training epochs, batch size, etc.
-- `MLFLOW_CONFIG`: MLflow experiment and tracking settings
+Most commands rely on the defaults in `config.py`. Override with environment variables when needed
+(e.g. `HOUSING_DATA_PATH`, `HOUSING_MODEL_PATH`, `KAFKA_BROKER_URL`).
 
 ## Usage
 
-### Training
-
-Run the training pipeline:
+### 1. Train Offline
 
 ```bash
 python src/train.py
 ```
 
-This will:
-1. Load and preprocess the data
-2. Generate exploratory visualizations
-3. Perform hyperparameter tuning
-4. Train the best model
-5. Log everything to MLflow
-6. Save the model and artifacts
+- Loads the configured dataset, fits the shared transformer, trains an XGBoost regressor.
+- Logs metrics, artefacts, and the pipeline to MLflow and `results/models/<run_name>`.
+- Outputs diagnostics (visualisations, feature importance, metadata JSON).
 
-### Evaluation
-
-Evaluate a trained model:
+### 2. Evaluate a Model Snapshot
 
 ```bash
-# Evaluate using the latest trained model
+# Evaluate the latest artefact under results/models
 python src/evaluate.py
 
-# Evaluate using a specific model path
+# Evaluate an explicit folder
 python src/evaluate.py --model-path results/models/training_run_20240101_120000
 
-# Evaluate using an MLflow model URI
+# Evaluate a registered MLflow model version
 python src/evaluate.py --model-uri models:/housing_price_predictor/1
 ```
 
-### MLflow UI
+Evaluation logs metrics back to the same MLflow experiment and produces plots under
+`results/evaluation/<run_name>`.
 
-View experiments and models:
+### 3. Serve Predictions via FastAPI
+
+```bash
+# Load latest local artefact
+uvicorn src.serving.app:app --reload
+
+# Or point to a specific model directory / MLflow URI
+HOUSING_MODEL_PATH=results/models/training_run_... uvicorn src.serving.app:app
+HOUSING_MODEL_URI=models:/housing_price_predictor/Production uvicorn src.serving.app:app
+```
+
+Endpoints:
+- `GET /health` – readiness signal with current model version
+- `GET /model-info` – feature order, categorical config, source metadata
+- `POST /predict` – accepts housing features, returns `estimated_price`
+
+### 4. Stream Raw Events into Kafka (Prototype)
+
+```bash
+# Publish dataset rows into a raw Kafka topic (dry run just prints JSON)
+python src/streaming/producer.py --dry-run --limit 5
+python src/streaming/producer.py --bootstrap localhost:9092 --topic raw_housing
+```
+
+The producer converts historic rows into the canonical feature payload defined for serving.
+
+### 5. Online Feature Parity with Faust (Prototype)
+
+```bash
+faust -A src.streaming.feature_processor worker -l info
+```
+
+The agent consumes the raw topic, applies the shared feature transformer, and publishes both the
+feature vector and the associated prediction to downstream topics (`feature_housing`, `predictions_housing`).
+This creates the backbone for shadow serving, drift monitoring, and multi-agent stress drills.
+
+## Data Contract
+
+The housing dataset should provide the following columns:
+
+| Column             | Type    | Notes                              |
+|--------------------|---------|------------------------------------|
+| `price`            | float   | Supervised target (USD)            |
+| `area`             | float   | Property area                      |
+| `bedrooms`         | int     | Number of bedrooms                 |
+| `bathrooms`        | float   | Number of bathrooms                |
+| `stories`          | int     | Number of stories                  |
+| `parking`          | int     | Parking spots                      |
+| `mainroad`         | yes/no  | Categorical (access to main road)  |
+| `guestroom`        | yes/no  | Categorical                        |
+| `basement`         | yes/no  | Categorical                        |
+| `hotwaterheating`  | yes/no  | Categorical                        |
+| `airconditioning`  | yes/no  | Categorical                        |
+| `prefarea`         | yes/no  | Categorical                        |
+| `furnishingstatus` | string  | `furnished`, `semi-furnished`, `unfurnished` |
+| `Address`          | string  | High-cardinality (dropped for now) |
+
+Set `HOUSING_DATA_PATH` to point at your CSV if it differs from the default.
+
+## MLflow Quickstart
 
 ```bash
 mlflow ui --backend-store-uri file:./mlruns
 ```
 
-Then open `http://localhost:5000` in your browser.
+Browse experiments, compare runs, and promote the registered `housing_price_predictor` model.
 
-## Data Format
+## Next Steps
 
-The dataset should be a CSV file with the following columns:
-- `price`: Target variable (continuous)
-- `area`: Numerical feature
-- `bedrooms`, `bathrooms`, `stories`, `parking`: Numerical features
-- `mainroad`, `guestroom`, `basement`, `hotwaterheating`, `airconditioning`, `prefarea`: Categorical features (yes/no)
-- `furnishingstatus`: Categorical feature (furnished/semi-furnished/unfurnished)
-
-## Model Architecture
-
-The neural network consists of:
-- Input layer: 20 features (after one-hot encoding)
-- Hidden layer 1: 32-512 neurons (tuned)
-- Hidden layer 2: 32-512 neurons (tuned)
-- Output layer: 1 neuron (linear activation for regression)
-
-Hyperparameters tuned:
-- Number of neurons in each hidden layer
-- Activation functions (relu, tanh, sigmoid)
-- Learning rate (0.01, 0.001, 0.0001)
-
-## Evaluation Metrics
-
-The model is evaluated using:
-- **MAE** (Mean Absolute Error)
-- **MSE** (Mean Squared Error)
-- **RMSE** (Root Mean Squared Error)
-- **RMSLE** (Root Mean Squared Logarithmic Error)
-- **R² Score** (Coefficient of Determination)
-
-## Best Practices Implemented
-
-### Software Engineering
-- ✅ Modular architecture with separation of concerns
-- ✅ Configuration management via config file
-- ✅ Comprehensive logging
-- ✅ Error handling and validation
-- ✅ Type hints and documentation
-- ✅ Command-line interface with argparse
-- ✅ Automated directory creation
-
-### Machine Learning
-- ✅ Reproducible experiments (fixed random seeds)
-- ✅ Proper train/test splitting
-- ✅ Feature scaling for neural networks
-- ✅ Hyperparameter tuning
-- ✅ Early stopping and learning rate reduction
-- ✅ Comprehensive evaluation metrics
-- ✅ Model versioning and artifact management
-- ✅ Experiment tracking with MLflow
-
-## Fixed Issues
-
-The original notebook had a bug in the evaluation cell:
-```python
-# BUG: Converting regression predictions to boolean
-y_pred = (y_pred > 0.5)
-```
-
-This has been fixed in `src/evaluate.py` to properly handle continuous regression predictions.
-
-## Output
-
-After training, you'll find:
-- **Models**: Saved in `results/models/[run_name]/model.keras`
-- **Scaler**: Saved in `results/models/[run_name]/scaler.pkl`
-- **Visualizations**: Saved in `results/visualizations/[run_name]/`
-- **MLflow Artifacts**: Logged to MLflow tracking server
-
-## Development
-
-To extend the project:
-1. Add new preprocessing steps in `utils/preprocessing.py`
-2. Add new visualizations in `utils/visualization.py`
-3. Modify model architecture in `utils/model_builder.py`
-4. Add new metrics in `src/evaluate.py`
+- Wire Kafka topics into observability and drift detectors
+- Add guardrail agents that react to metrics streamed out of the Faust app
+- Extend the FastAPI surface with batch prediction and schema validation endpoints
+- Deploy the full stack via Docker Compose for reproducible local drills
 
 ## License
 
-This project was created by Parv Soni for housing price prediction research.
-
-## Notes
-
-- The original notebook path expects data at `/kaggle/input/housing-prices-dataset/Housing.csv`
-- Update `DATA_PATH` in `config.py` or set `HOUSING_DATA_PATH` environment variable to use your data location
-- MLflow tracking uses local file storage by default (change in `config.py` for remote tracking)
+Apache-2.0 — see `LICENSE` if/when it lands. Current work authored by Hanish Moola.
