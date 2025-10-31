@@ -48,6 +48,21 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+Alternatively, use Poetry or uv (recommended for speed and lockfile hygiene):
+
+Poetry:
+```bash
+poetry install
+poetry shell
+```
+
+uv (reads pyproject.toml directly):
+```bash
+uv sync          # creates .venv and installs from pyproject
+# or maintain parity with requirements.txt
+uv pip install -r requirements.txt
+```
+
 Most commands rely on the defaults in `config.py`. Override with environment variables when needed
 (e.g. `HOUSING_DATA_PATH`, `HOUSING_MODEL_PATH`, `KAFKA_BROKER_URL`).
 
@@ -57,6 +72,8 @@ Most commands rely on the defaults in `config.py`. Override with environment var
 
 ```bash
 python src/train.py
+poetry run python src/train.py
+uv run python src/train.py
 ```
 
 - Loads the configured dataset, fits the shared transformer, trains an XGBoost regressor.
@@ -68,6 +85,8 @@ python src/train.py
 ```bash
 # Evaluate the latest artefact under results/models
 python src/evaluate.py
+poetry run python src/evaluate.py
+uv run python src/evaluate.py
 
 # Evaluate an explicit folder
 python src/evaluate.py --model-path results/models/training_run_20240101_120000
