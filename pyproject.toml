@@ -2,7 +2,7 @@
 name = "stream-ml-housing-lab"
 version = "0.1.0"
 description = "Housing price prediction pipeline with MLflow, Keras Tuner, and modular utilities"
-authors = ["Parv Soni <parv@example.com>"]
+authors = ["Hanish Moola <moola.hanish@gmail.com>"]
 readme = "README.md"
 packages = [{ include = "src" }, { include = "utils" }]
 
