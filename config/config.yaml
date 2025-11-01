@@ -1,0 +1,27 @@
+# Default configuration for the Stream-ML Housing Lab pipeline
+# Values can be overridden via environment variables or CLI arguments.
+
+project:
+  name: "stream-ml-housing-lab"
+
+data:
+  raw_data_path: "data/Housing.csv"
+  target_column: "price"
+  index_column: null
+  test_size: 0.2
+  random_state: 42
+
+artifacts:
+  root: "artifacts"
+  transformer_subdir: "transformers"
+  model_subdir: "models"
+  metrics_subdir: "metrics"
+
+mlflow:
+  experiment_name: "housing_price_workflow"
+  tracking_uri: "mlruns"
+  run_name_template: "run_{timestamp}"
+
+model:
+  type: "linear_regression"
+  hyperparameters: {}
