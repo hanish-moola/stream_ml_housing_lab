@@ -27,3 +27,18 @@ To provide overrides, export environment variables before running CLI commands, 
 export HOUSING_DATA_PATH=/data/Housing.csv
 poetry run train-model
 ```
+
+### Neural Network Hyperparameters
+
+Set `model.type: neural_network` and provide keys in `model.hyperparameters` such as:
+
+| Key | Description |
+|-----|-------------|
+| `hidden_units` | List of layer sizes (e.g. `[128, 64]`). |
+| `activation` | Activation function (default `relu`). |
+| `dropout` | Dropout rate applied after each hidden layer. |
+| `learning_rate` | Adam optimizer learning rate. |
+| `epochs` | Training epochs (default 200). |
+| `batch_size` | Batch size (default 32). |
+| `validation_split` | Fraction of training data held out for validation. |
+

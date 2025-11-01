@@ -27,3 +27,9 @@ def test_compute_metrics_outputs_expected_values():
     assert pytest.approx(metrics["mse"], rel=1e-6) == 0.25
     assert pytest.approx(metrics["rmse"], rel=1e-6) == 0.5
     assert pytest.approx(metrics["r2"], rel=1e-6) == 0.90625
+
+
+def test_build_model_neural_network():
+    model = _build_model("neural_network", {"hidden_units": [16, 8]}, input_dim=4)
+    assert hasattr(model, "fit")
+    assert model.count_params() > 0

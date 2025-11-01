@@ -17,6 +17,7 @@ from sklearn.pipeline import Pipeline
 from .config import ProjectConfig, load_config
 from .data import load_raw_data, split_features_target, stratified_train_test_split
 from .feature_engineering import FeatureMetadata, run_feature_engineering
+from .models.pipelines import KerasRegressionPipeline
 from .logging_utils import configure_logging, get_logger
 from .mlflow_utils import ensure_run
 from .registry import (
@@ -56,9 +57,13 @@ def _resolve_feature_artifacts(config: ProjectConfig) -> Dict[str, Path]:
     }
 
 
-def _build_model(model_type: str, hyperparameters: Dict[str, Any]) -> Any:
+def _build_model(model_type: str, hyperparameters: Dict[str, Any], input_dim: Optional[int] = None) -> Any:
     if model_type == "linear_regression":
         return LinearRegression(**hyperparameters)
+    if model_type == "neural_network":
+        if input_dim is None:
+            raise ValueError("input_dim must be provided for neural_network model")
+        return _build_keras_regressor(input_dim, hyperparameters)
     raise ValueError(f"Unsupported model type: {model_type}")
 
 
@@ -69,6 +74,28 @@ def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]
         "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
         "r2": float(r2_score(y_true, y_pred)),
     }
+
+
+def _build_keras_regressor(input_dim: int, hyperparameters: Dict[str, Any]):
+    from tensorflow import keras
+    from tensorflow.keras import layers
+
+    hidden_units = hyperparameters.get("hidden_units", [128, 64])
+    activation = hyperparameters.get("activation", "relu")
+    dropout = float(hyperparameters.get("dropout", 0.0))
+    learning_rate = float(hyperparameters.get("learning_rate", 0.001))
+
+    model = keras.Sequential()
+    model.add(layers.Input(shape=(input_dim,)))
+    for units in hidden_units:
+        model.add(layers.Dense(int(units), activation=activation))
+        if dropout > 0:
+            model.add(layers.Dropout(dropout))
+    model.add(layers.Dense(1))
+
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    model.compile(optimizer=optimizer, loss="mse", metrics=["mae", "mse"])
+    return model
 
 
 def _log_training_summary(config: ProjectConfig, metrics: Dict[str, float], run_name: str) -> None:
@@ -111,9 +138,33 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
         X_train_transformed = transformer.transform(X_train)
         X_test_transformed = transformer.transform(X_test)
 
-        model = _build_model(config.model.type, config.model.hyperparameters)
-        model.fit(X_train_transformed, y_train)
-        predictions = model.predict(X_test_transformed)
+        model_type = config.model.type
+        hyperparameters = config.model.hyperparameters
+
+        if model_type == "neural_network":
+            X_train_transformed = X_train_transformed.astype("float32")
+            X_test_transformed = X_test_transformed.astype("float32")
+            model = _build_model(model_type, hyperparameters, input_dim=X_train_transformed.shape[1])
+            epochs = int(hyperparameters.get("epochs", 200))
+            batch_size = int(hyperparameters.get("batch_size", 32))
+            validation_split = float(hyperparameters.get("validation_split", 0.1))
+            history = model.fit(
+                X_train_transformed,
+                y_train.to_numpy().astype("float32"),
+                epochs=epochs,
+                batch_size=batch_size,
+                validation_split=validation_split,
+                verbose=0,
+            )
+            predictions = model.predict(X_test_transformed, verbose=0).flatten()
+            if history.history.get("loss"):
+                mlflow.log_metric("train_loss_final", float(history.history["loss"][-1]))
+            if history.history.get("mae"):
+                mlflow.log_metric("train_mae_final", float(history.history["mae"][-1]))
+        else:
+            model = _build_model(model_type, hyperparameters)
+            model.fit(X_train_transformed, y_train)
+            predictions = model.predict(X_test_transformed)
 
         metrics = _compute_metrics(y_test.to_numpy(), predictions)
         _log_training_summary(config, metrics, effective_run_name)
@@ -133,18 +184,27 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
         results_df.to_csv(predictions_path, index=False)
         mlflow.log_artifact(str(predictions_path))
 
-        inference_pipeline = Pipeline(
-            steps=[
-                ("preprocess", transformer),
-                ("model", model),
-            ]
-        )
-        save_model(inference_pipeline, artifacts.model_path)
-        mlflow.sklearn.log_model(inference_pipeline, artifact_path="model")
+        if model_type == "neural_network":
+            keras_model_dir = artifacts.model_path.parent / "keras_model"
+            model.save(keras_model_dir)
+            inference_pipeline = KerasRegressionPipeline(transformer, keras_model_dir)
+            save_model(inference_pipeline, artifacts.model_path)
+            mlflow.keras.log_model(model, artifact_path="model")
+        else:
+            inference_pipeline = Pipeline(
+                steps=[
+                    ("preprocess", transformer),
+                    ("model", model),
+                ]
+            )
+            save_model(inference_pipeline, artifacts.model_path)
+            mlflow.sklearn.log_model(inference_pipeline, artifact_path="model")
+            keras_model_dir = None
 
         run_metadata = {
             "run_name": effective_run_name,
             "mlflow_run_id": run.info.run_id,
+            "model_type": model_type,
             "feature_artifacts": {
                 "source_run_dir": str(feature_artifacts["run_dir"]),
                 "transformer": str(feature_artifacts["transformer"]),
@@ -158,6 +218,8 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
             },
             "metrics": metrics,
         }
+        if keras_model_dir is not None:
+            run_metadata["artifacts"]["keras_model"] = str(keras_model_dir)
         write_metadata(run_metadata, artifacts.metadata_path)
 
         logger.info("Training complete. Model stored at %s", artifacts.model_path)

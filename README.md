@@ -83,6 +83,7 @@ Key overrides:
 - `HOUSING_DATA_PATH` – path to the dataset CSV.
 - `HOUSING_ARTIFACTS_ROOT` – directory for artifact storage.
 - `MLFLOW_TRACKING_URI` – MLflow backend URI (defaults to local `mlruns`).
+- `model.type` – switch between `linear_regression` (default) and `neural_network`; adjust `model.hyperparameters` accordingly.
 
 ## MLflow Tracking
 
