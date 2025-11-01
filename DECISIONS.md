@@ -6,3 +6,4 @@
 - Introduced a configuration system (`config/config.yaml` + `src/config.py`) with environment-variable overrides to support reproducible experiments across environments.
 - Established shared utility modules (`src/data.py`, `src/registry.py`, `src/logging_utils.py`) to centralise data access, artifact management, and logging, enabling later pipeline stages to compose these primitives.
 - Seeded lightweight pytest coverage for config loading and artifact registry behaviour to guard future refactors.
+- Designed Phase 2 feature engineering module to infer feature types dynamically, persist preprocessing artifacts, and log metadata to MLflow for reproducibility.
