@@ -1,114 +1,139 @@
-"""Offline evaluation for the XGBoost housing price predictor."""
+"""Evaluation pipeline for the trained housing price model."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import logging
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 import mlflow
 import pandas as pd
-from sklearn.model_selection import train_test_split
 
-from config import (
-    CATEGORICAL_COLUMNS,
-    DATA_PATH,
-    EXCLUDE_COLUMNS,
-    MLFLOW_CONFIG,
-    RANDOM_STATE,
-    RESULTS_DIR,
-    TARGET_COLUMN,
-    TEST_SIZE,
+from .config import ArtifactsConfig, ProjectConfig, load_config
+from .data import load_raw_data, split_features_target, stratified_train_test_split
+from .logging_utils import configure_logging, get_logger
+from .mlflow_utils import ensure_run
+from .registry import (
+    build_run_name,
+    load_model,
+    prepare_run_artifacts,
+    resolve_latest_run,
+    write_metadata,
 )
-from utils.data_loader import load_housing_data
-from utils.feature_pipeline import split_features_and_target
-from utils.metrics import regression_metrics
-from utils.pipeline_loader import load_pipeline
-from utils.visualization import plot_predictions_vs_actual
+from .train import _compute_metrics
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
-def evaluate(pipeline, df: pd.DataFrame, run_name: str) -> None:
-    """Evaluate the pipeline on the configured test split and log artefacts."""
-    X, y, _, _ = split_features_and_target(
-        df,
-        target_column=TARGET_COLUMN,
-        exclude_columns=EXCLUDE_COLUMNS,
-        categorical_columns=CATEGORICAL_COLUMNS,
-    )
+def _resolve_model_artifacts(
+    artifacts_cfg: ArtifactsConfig,
+    model_run_dir: Optional[Path] = None,
+) -> Dict[str, Path]:
+    if model_run_dir is not None:
+        run_dir = model_run_dir
+    else:
+        latest = resolve_latest_run(artifacts_cfg)
+        if latest is None or not latest.model_path.exists():
+            raise FileNotFoundError("No trained model artifacts found. Train a model first.")
+        run_dir = latest.run_dir
 
-    _, X_test, _, y_test = train_test_split(
-        X,
-        y,
-        test_size=TEST_SIZE,
-        random_state=RANDOM_STATE,
-    )
-    mlflow.log_param("evaluation_rows", len(X_test))
+    model_path = run_dir / artifacts_cfg.model_subdir / "model.joblib"
+    transformer_path = run_dir / artifacts_cfg.transformer_subdir / "transformer.joblib"
+    metadata_path = run_dir / "metadata.json"
 
-    y_pred = pipeline.predict(X_test)
-    metrics = regression_metrics(y_test.values, y_pred)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model artifact missing: {model_path}")
+    if not transformer_path.exists():
+        raise FileNotFoundError(f"Transformer artifact missing: {transformer_path}")
 
-    for name, value in metrics.items():
-        if value is not None:
-            mlflow.log_metric(name, float(value))
-
-    eval_dir = RESULTS_DIR / "evaluation" / run_name
-    eval_dir.mkdir(parents=True, exist_ok=True)
-
-    plot_path = eval_dir / "predictions_vs_actual.png"
-    plot_predictions_vs_actual(y_test.values, y_pred, plot_path)
-    mlflow.log_artifact(str(plot_path))
-
-    metrics_path = eval_dir / "metrics.json"
-    with metrics_path.open("w", encoding="utf-8") as f:
-        json.dump({k: float(v) for k, v in metrics.items() if v is not None}, f, indent=2)
-    mlflow.log_artifact(str(metrics_path))
-
-    logger.info("Evaluation metrics: %s", metrics)
+    return {
+        "run_dir": run_dir,
+        "model": model_path,
+        "transformer": transformer_path,
+        "metadata": metadata_path,
+    }
 
 
-def main(
-    model_path: Optional[str] = None,
-    model_uri: Optional[str] = None,
-    data_path: Optional[str] = None,
+def run_evaluation(
+    config: ProjectConfig,
+    model_run_dir: Optional[Path] = None,
+    run_name: Optional[str] = None,
 ) -> None:
-    data_path = data_path or DATA_PATH
-    df = load_housing_data(data_path)
+    configure_logging()
 
-    mlflow.set_tracking_uri(MLFLOW_CONFIG["tracking_uri"])
-    mlflow.set_experiment(MLFLOW_CONFIG["experiment_name"])
+    mlflow.set_tracking_uri(config.mlflow.tracking_uri)
+    mlflow.set_experiment(config.mlflow.experiment_name)
 
-    run_name = f"evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    with mlflow.start_run(run_name=run_name):
-        mlflow.log_param("data_path", str(data_path))
-        mlflow.log_param("test_size", TEST_SIZE)
-        mlflow.log_param("random_state", RANDOM_STATE)
+    base_run_name = run_name or build_run_name(config.mlflow.run_name_template)
+    effective_run_name = f"evaluation_{base_run_name}" if not run_name else run_name
+    artifacts = prepare_run_artifacts(config.artifacts, effective_run_name)
 
-        pipeline, resolved_path, resolved_uri = load_pipeline(
-            model_path=Path(model_path) if model_path else None,
-            model_uri=model_uri,
+    model_artifacts = _resolve_model_artifacts(config.artifacts, model_run_dir)
+    pipeline = load_model(model_artifacts["model"])
+
+    with ensure_run(effective_run_name) as run:
+        logger.info("Evaluating model run %s", model_artifacts["run_dir"])
+
+        df = load_raw_data(config.data)
+        X, y = split_features_target(df, config.data)
+        _, X_test, _, y_test = stratified_train_test_split(X, y, config.data)
+
+        predictions = pipeline.predict(X_test)
+        metrics = _compute_metrics(y_test.to_numpy(), predictions)
+        mlflow.log_metrics({f"eval_{k}": v for k, v in metrics.items()})
+
+        metrics_path = artifacts.metrics_path
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with metrics_path.open("w", encoding="utf-8") as handle:
+            json.dump(metrics, handle, indent=2)
+        mlflow.log_artifact(str(metrics_path))
+
+        evaluation_df = pd.DataFrame({
+            "y_true": y_test,
+            "y_pred": predictions,
+            "residual": y_test - predictions,
+        })
+        predictions_path = metrics_path.parent / "evaluation_predictions.csv"
+        evaluation_df.to_csv(predictions_path, index=False)
+        mlflow.log_artifact(str(predictions_path))
+
+        mlflow.log_params(
+            {
+                "evaluation_model_run": str(model_artifacts["run_dir"]),
+                "evaluation_dataset": str(config.data.raw_data_path),
+            }
         )
-        if resolved_path:
-            mlflow.log_param("model_path", str(resolved_path))
-        if resolved_uri:
-            mlflow.log_param("model_uri", resolved_uri)
+        mlflow.set_tag("evaluation", True)
 
-        evaluate(pipeline, df, run_name)
+        evaluation_metadata = {
+            "evaluation_run": effective_run_name,
+            "mlflow_run_id": run.info.run_id,
+            "evaluated_model": str(model_artifacts["model"]),
+            "metrics": metrics,
+            "artifacts": {
+                "metrics": str(metrics_path),
+                "predictions": str(predictions_path),
+            },
+        }
+        write_metadata(evaluation_metadata, artifacts.metadata_path)
+
+        logger.info("Evaluation complete. Metrics stored at %s", metrics_path)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate the trained housing price model")
-    parser.add_argument("--model-path", type=str, help="Local directory containing pipeline.joblib")
-    parser.add_argument("--model-uri", type=str, help="MLflow model URI to load")
-    parser.add_argument("--data-path", type=str, help="Optional override for the dataset path")
+def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate the latest trained housing price model")
+    parser.add_argument("--config", type=Path, help="Optional path to configuration YAML")
+    parser.add_argument("--model-run", type=Path, help="Optional path to a specific training run directory")
+    parser.add_argument("--run-name", type=str, help="Optional explicit evaluation run name")
+    return parser.parse_args(args)
 
-    args = parser.parse_args()
-    main(args.model_path, args.model_uri, args.data_path)
+
+def main(argv: Optional[List[str]] = None) -> None:
+    cli_args = parse_args(argv)
+    config = load_config(path=cli_args.config)
+    run_evaluation(config, model_run_dir=cli_args.model_run, run_name=cli_args.run_name)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()

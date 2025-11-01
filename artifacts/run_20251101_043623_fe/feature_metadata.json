@@ -1,0 +1,40 @@
+{
+  "numeric": [
+    "area",
+    "bedrooms",
+    "bathrooms",
+    "stories",
+    "parking"
+  ],
+  "categorical": [
+    "mainroad",
+    "guestroom",
+    "basement",
+    "hotwaterheating",
+    "airconditioning",
+    "prefarea",
+    "furnishingstatus"
+  ],
+  "feature_names": [
+    "numeric__area",
+    "numeric__bedrooms",
+    "numeric__bathrooms",
+    "numeric__stories",
+    "numeric__parking",
+    "categorical__mainroad_no",
+    "categorical__mainroad_yes",
+    "categorical__guestroom_no",
+    "categorical__guestroom_yes",
+    "categorical__basement_no",
+    "categorical__basement_yes",
+    "categorical__hotwaterheating_no",
+    "categorical__hotwaterheating_yes",
+    "categorical__airconditioning_no",
+    "categorical__airconditioning_yes",
+    "categorical__prefarea_no",
+    "categorical__prefarea_yes",
+    "categorical__furnishingstatus_furnished",
+    "categorical__furnishingstatus_semi-furnished",
+    "categorical__furnishingstatus_unfurnished"
+  ]
+}

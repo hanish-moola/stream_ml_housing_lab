@@ -1,0 +1,16 @@
+# Architectural & Technical Decisions
+
+## 2025-10-31
+- Adopted Poetry as the single source of dependency and script management. Runtime and dev dependencies defined in `pyproject.toml`; `poetry lock`/`poetry install` to be executed in connected environments once package indexes are accessible.
+- Pruned legacy streaming/serving scaffolding to return the repo to a lean notebook-derived baseline so the new pipeline can be rebuilt cleanly.
+- Introduced a configuration system (`config/config.yaml` + `src/config.py`) with environment-variable overrides to support reproducible experiments across environments.
+- Established shared utility modules (`src/data.py`, `src/registry.py`, `src/logging_utils.py`) to centralise data access, artifact management, and logging, enabling later pipeline stages to compose these primitives.
+- Seeded lightweight pytest coverage for config loading and artifact registry behaviour to guard future refactors.
+- Designed Phase 2 feature engineering module to infer feature types dynamically, persist preprocessing artifacts, and log metadata to MLflow for reproducibility.
+
+- Completed Phase 3 training pipeline: reuses persisted transformers, logs comprehensive metrics/artifacts to MLflow, and persists an inference-ready sklearn pipeline.
+- Added evaluation pipeline to reuse packaged model artifacts, produce independent holdout metrics, and persist evaluation outputs for auditability.
+- Implemented prediction CLI that aligns payloads with saved feature metadata, ensuring inference parity and emitting MLflow prediction logs.
+- Documented pipeline usage and configuration in README + docs/ to guide onboarding for junior engineers.
+- Introduced offline training workflow CLI to orchestrate feature engineering, training, evaluation, and MLflow logging in a single command.
+

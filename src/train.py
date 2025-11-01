@@ -1,211 +1,180 @@
-"""
-Training script for housing price prediction using an XGBoost regression pipeline
-with MLflow tracking and shared feature engineering for offline/online parity.
-"""
+"""Training pipeline for the housing price model."""
 
 from __future__ import annotations
 
+import argparse
 import json
-import logging
-from datetime import datetime
-from typing import Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-import joblib
 import mlflow
-import mlflow.sklearn
+import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
-from xgboost import XGBRegressor
 
-from config import (
-    CATEGORICAL_COLUMNS,
-    DATA_PATH,
-    EXCLUDE_COLUMNS,
-    MLFLOW_CONFIG,
-    MODEL_REGISTRY_NAME,
-    RANDOM_STATE,
-    RESULTS_DIR,
-    TARGET_COLUMN,
-    TEST_SIZE,
-    XGBOOST_PARAMS,
+from .config import ProjectConfig, load_config
+from .data import load_raw_data, split_features_target, stratified_train_test_split
+from .feature_engineering import FeatureMetadata, run_feature_engineering
+from .logging_utils import configure_logging, get_logger
+from .mlflow_utils import ensure_run
+from .registry import (
+    build_run_name,
+    load_transformer,
+    prepare_run_artifacts,
+    resolve_latest_run,
+    save_model,
+    save_transformer,
+    write_metadata,
 )
-from utils.data_loader import get_data_info, load_housing_data
-from utils.feature_pipeline import (
-    build_feature_transformer,
-    get_feature_names,
-    split_features_and_target,
-)
-from utils.metrics import regression_metrics
-from utils.visualization import create_visualizations, plot_predictions_vs_actual
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
-def setup_mlflow(run_name: str | None = None) -> str:
-    """Configure MLflow tracking and return the active run name."""
-    mlflow.set_tracking_uri(MLFLOW_CONFIG["tracking_uri"])
-    mlflow.set_experiment(MLFLOW_CONFIG["experiment_name"])
+def _resolve_feature_artifacts(config: ProjectConfig) -> Dict[str, Path]:
+    """Ensure a fitted feature transformer exists and return its artifact paths."""
 
-    if run_name is None:
-        run_name = f"training_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    latest_run = resolve_latest_run(config.artifacts)
+    if latest_run is None or not latest_run.transformer_path.exists():
+        logger.info("No feature artifacts detected. Triggering feature engineering run.")
+        run_feature_engineering(config)
+        latest_run = resolve_latest_run(config.artifacts)
+        if latest_run is None:
+            raise RuntimeError("Feature engineering did not produce artifacts")
 
-    logger.info("MLflow experiment: %s", MLFLOW_CONFIG["experiment_name"])
-    logger.info("MLflow run: %s", run_name)
+    metadata_path = latest_run.run_dir / "feature_metadata.json"
+    stats_path = latest_run.run_dir / "training_stats.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Expected feature metadata at {metadata_path}")
 
-    return run_name
-
-
-def log_dataset_metadata(data_info: Dict[str, object]) -> None:
-    """Record dataset metadata in MLflow for traceability."""
-    mlflow.log_param("data_shape_rows", data_info["shape"][0])
-    mlflow.log_param("data_shape_cols", data_info["shape"][1])
-    mlflow.log_param("memory_usage_mb", round(data_info["memory_usage_mb"], 2))
-    mlflow.log_param("feature_columns", ",".join(map(str, data_info["columns"])))
-
-
-def log_model_artifacts(
-    pipeline: Pipeline,
-    raw_df: pd.DataFrame,
-    encoded_df: pd.DataFrame,
-    y_test: pd.Series,
-    y_pred,
-    feature_names: List[str],
-    run_name: str,
-) -> None:
-    """Generate diagnostic artefacts and store them locally and in MLflow."""
-    viz_dir = RESULTS_DIR / "visualizations" / run_name
-    viz_dir.mkdir(parents=True, exist_ok=True)
-
-    create_visualizations(raw_df, encoded_df, viz_dir)
-
-    preds_path = viz_dir / "predictions_vs_actual.png"
-    plot_predictions_vs_actual(y_test.values, y_pred, preds_path)
-    mlflow.log_artifact(str(preds_path))
-
-    booster = pipeline.named_steps["regressor"]
-    if hasattr(booster, "feature_importances_"):
-        importance_df = (
-            pd.DataFrame({"feature": feature_names, "importance": booster.feature_importances_})
-            .sort_values("importance", ascending=False)
-            .reset_index(drop=True)
-        )
-        importance_path = viz_dir / "feature_importance.csv"
-        importance_df.to_csv(importance_path, index=False)
-        mlflow.log_artifact(str(importance_path))
+    return {
+        "transformer": latest_run.transformer_path,
+        "metadata": metadata_path,
+        "stats": stats_path,
+        "run_dir": latest_run.run_dir,
+    }
 
 
-def train_model() -> None:
-    """Execute the complete training pipeline."""
-    run_name = setup_mlflow()
+def _build_model(model_type: str, hyperparameters: Dict[str, Any]) -> Any:
+    if model_type == "linear_regression":
+        return LinearRegression(**hyperparameters)
+    raise ValueError(f"Unsupported model type: {model_type}")
 
-    with mlflow.start_run(run_name=run_name):
-        logger.info("Starting training pipeline")
 
-        # Load data
-        df = load_housing_data(DATA_PATH)
-        data_info = get_data_info(df)
-        log_dataset_metadata(data_info)
+def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+    return {
+        "mae": float(mean_absolute_error(y_true, y_pred)),
+        "mse": float(mean_squared_error(y_true, y_pred)),
+        "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+        "r2": float(r2_score(y_true, y_pred)),
+    }
 
-        # Prepare features
-        X, y, numerical_cols, categorical_cols = split_features_and_target(
-            df,
-            target_column=TARGET_COLUMN,
-            exclude_columns=EXCLUDE_COLUMNS,
-            categorical_columns=CATEGORICAL_COLUMNS,
-        )
 
-        if dropped := [col for col in EXCLUDE_COLUMNS if col in df.columns]:
-            logger.info("Dropped high-cardinality columns: %s", dropped)
+def _log_training_summary(config: ProjectConfig, metrics: Dict[str, float], run_name: str) -> None:
+    mlflow.log_params(
+        {
+            "model_type": config.model.type,
+            "test_size": config.data.test_size,
+            "random_state": config.data.random_state,
+        }
+    )
+    for key, value in config.model.hyperparameters.items():
+        mlflow.log_param(f"model_{key}", value)
+    mlflow.log_metrics(metrics)
+    mlflow.set_tag("run_name", run_name)
 
-        logger.info(
-            "Using %d numerical and %d categorical features",
-            len(numerical_cols),
-            len(categorical_cols),
-        )
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X,
-            y,
-            test_size=TEST_SIZE,
-            random_state=RANDOM_STATE,
-        )
-        mlflow.log_param("train_rows", len(X_train))
-        mlflow.log_param("test_rows", len(X_test))
-        mlflow.log_param("random_state", RANDOM_STATE)
-        mlflow.log_param("test_size", TEST_SIZE)
+def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
+    configure_logging()
 
-        # Build modelling pipeline
-        feature_transformer = build_feature_transformer(
-            categorical_columns=categorical_cols,
-            numerical_columns=numerical_cols,
-        )
-        regressor = XGBRegressor(**XGBOOST_PARAMS)
-        pipeline = Pipeline(
+    mlflow.set_tracking_uri(config.mlflow.tracking_uri)
+    mlflow.set_experiment(config.mlflow.experiment_name)
+
+    effective_run_name = run_name or build_run_name(config.mlflow.run_name_template)
+    artifacts = prepare_run_artifacts(config.artifacts, effective_run_name)
+
+    feature_artifacts = _resolve_feature_artifacts(config)
+    with feature_artifacts["metadata"].open("r", encoding="utf-8") as handle:
+        feature_metadata = FeatureMetadata(**json.load(handle))
+
+    with ensure_run(effective_run_name) as run:
+        logger.info("Starting training run: %s", run.info.run_id)
+
+        df = load_raw_data(config.data)
+        X, y = split_features_target(df, config.data)
+        X_train, X_test, y_train, y_test = stratified_train_test_split(X, y, config.data)
+
+        transformer = load_transformer(feature_artifacts["transformer"])
+        save_transformer(transformer, artifacts.transformer_path)
+
+        X_train_transformed = transformer.transform(X_train)
+        X_test_transformed = transformer.transform(X_test)
+
+        model = _build_model(config.model.type, config.model.hyperparameters)
+        model.fit(X_train_transformed, y_train)
+        predictions = model.predict(X_test_transformed)
+
+        metrics = _compute_metrics(y_test.to_numpy(), predictions)
+        _log_training_summary(config, metrics, effective_run_name)
+
+        metrics_path = artifacts.metrics_path
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with metrics_path.open("w", encoding="utf-8") as handle:
+            json.dump(metrics, handle, indent=2)
+        mlflow.log_artifact(str(metrics_path))
+
+        results_df = pd.DataFrame({
+            "y_true": y_test,
+            "y_pred": predictions,
+            "residual": y_test - predictions,
+        })
+        predictions_path = metrics_path.parent / "predictions.csv"
+        results_df.to_csv(predictions_path, index=False)
+        mlflow.log_artifact(str(predictions_path))
+
+        inference_pipeline = Pipeline(
             steps=[
-                ("features", feature_transformer),
-                ("regressor", regressor),
+                ("preprocess", transformer),
+                ("model", model),
             ]
         )
+        save_model(inference_pipeline, artifacts.model_path)
+        mlflow.sklearn.log_model(inference_pipeline, artifact_path="model")
 
-        logger.info("Training XGBoost pipeline with params: %s", XGBOOST_PARAMS)
-        mlflow.log_params({f"model__{key}": value for key, value in XGBOOST_PARAMS.items()})
-        pipeline.fit(X_train, y_train)
-
-        # Evaluate on hold-out set
-        y_pred = pipeline.predict(X_test)
-        metrics = regression_metrics(y_test.values, y_pred)
-        for metric_name, metric_value in metrics.items():
-            if metric_value is not None:
-                mlflow.log_metric(metric_name, float(metric_value))
-
-        logger.info("Evaluation metrics: %s", metrics)
-
-        # Visual artefacts & diagnostics
-        feature_names = get_feature_names(
-            pipeline.named_steps["features"], numerical_cols, categorical_cols
-        )
-        transformed_full = pipeline.named_steps["features"].transform(X)
-        encoded_df = pd.DataFrame(transformed_full, columns=feature_names)
-        log_model_artifacts(pipeline, df, encoded_df, y_test, y_pred, feature_names, run_name)
-
-        # Persist artefacts locally and to MLflow
-        model_dir = RESULTS_DIR / "models" / run_name
-        model_dir.mkdir(parents=True, exist_ok=True)
-        pipeline_path = model_dir / "pipeline.joblib"
-        joblib.dump(pipeline, pipeline_path)
-        mlflow.log_artifact(str(pipeline_path))
-
-        feature_names_path = model_dir / "feature_names.txt"
-        feature_names_path.write_text("\n".join(feature_names), encoding="utf-8")
-        mlflow.log_artifact(str(feature_names_path))
-
-        input_example = X_test.iloc[:1]
-        mlflow.sklearn.log_model(
-            sk_model=pipeline,
-            artifact_path="model",
-            registered_model_name=MODEL_REGISTRY_NAME,
-            input_example=input_example,
-        )
-
-        metadata = {
-            "run_name": run_name,
-            "numerical_columns": numerical_cols,
-            "categorical_columns": categorical_cols,
-            "exclude_columns": [col for col in EXCLUDE_COLUMNS if col in df.columns],
-            "metrics": {k: float(v) for k, v in metrics.items() if v is not None},
+        run_metadata = {
+            "run_name": effective_run_name,
+            "mlflow_run_id": run.info.run_id,
+            "feature_artifacts": {
+                "source_run_dir": str(feature_artifacts["run_dir"]),
+                "transformer": str(feature_artifacts["transformer"]),
+                "metadata": str(feature_artifacts["metadata"]),
+            },
+            "artifacts": {
+                "model": str(artifacts.model_path),
+                "transformer": str(artifacts.transformer_path),
+                "metrics": str(metrics_path),
+                "predictions": str(predictions_path),
+            },
+            "metrics": metrics,
         }
-        metadata_path = model_dir / "metadata.json"
-        with metadata_path.open("w", encoding="utf-8") as fp:
-            json.dump(metadata, fp, indent=2)
-        mlflow.log_artifact(str(metadata_path))
+        write_metadata(run_metadata, artifacts.metadata_path)
 
-        logger.info("Training pipeline completed successfully")
+        logger.info("Training complete. Model stored at %s", artifacts.model_path)
 
 
-if __name__ == "__main__":
-    train_model()
+def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train the housing price model")
+    parser.add_argument("--config", type=Path, help="Optional path to configuration YAML")
+    parser.add_argument("--run-name", type=str, help="Optional explicit run name")
+    return parser.parse_args(args)
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    cli_args = parse_args(argv)
+    config = load_config(path=cli_args.config)
+    run_training(config, run_name=cli_args.run_name)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()

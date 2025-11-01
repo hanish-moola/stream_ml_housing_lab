@@ -1,0 +1,9 @@
+{
+  "run_name": "run_20251101_043623_fe",
+  "mlflow_run_id": "f60d5ccc44f2432da8c136b0b83f7b6a",
+  "artifacts": {
+    "transformer": "artifacts/run_20251101_043623_fe/transformers/transformer.joblib",
+    "feature_metadata": "artifacts/run_20251101_043623_fe/feature_metadata.json",
+    "training_stats": "artifacts/run_20251101_043623_fe/training_stats.json"
+  }
+}
