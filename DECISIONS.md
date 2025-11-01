@@ -9,3 +9,5 @@
 - Designed Phase 2 feature engineering module to infer feature types dynamically, persist preprocessing artifacts, and log metadata to MLflow for reproducibility.
 
 - Completed Phase 3 training pipeline: reuses persisted transformers, logs comprehensive metrics/artifacts to MLflow, and persists an inference-ready sklearn pipeline.
+- Added evaluation pipeline to reuse packaged model artifacts, produce independent holdout metrics, and persist evaluation outputs for auditability.
+
