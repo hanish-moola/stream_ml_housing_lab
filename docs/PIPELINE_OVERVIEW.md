@@ -2,6 +2,10 @@
 
 ## Stage Summary
 
+0. **Offline Workflow (`poetry run offline-train`)**
+   - Orchestrates feature engineering, training, and evaluation in sequence.
+   - Accepts dataset overrides via `--data-path` and logs a consolidated MLflow run summarising stage outputs.
+
 1. **Feature Engineering (`poetry run feature-engineering`)**
    - Loads the raw dataset via `src/data.py`.
    - Infers numeric/categorical columns, fits a `ColumnTransformer`, and persists transformer + metadata.

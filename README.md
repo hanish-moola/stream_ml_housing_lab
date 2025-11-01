@@ -52,9 +52,15 @@ stream_ml_housing_lab/
    poetry run predict-model --features payload.json
    ```
 
+   To execute the entire workflow (feature engineering → training → evaluation) in one command and log an offline model to MLflow, run:
+
+   ```bash
+   poetry run offline-train --data-path /path/to/Housing.csv
+   ```
+
 Each command accepts `--config` for alternative configuration files and `--run-name` to override the
 auto-generated identifier. Evaluation/prediction additionally support `--model-run` to target specific
-training artifacts.
+training artifacts. The offline workflow also accepts these flags and will cascade overrides to each stage.
 
 ## Command Cheatsheet
 
@@ -64,6 +70,7 @@ training artifacts.
 | Training            | `poetry run train-model --config config/config.yaml`
 | Evaluation          | `poetry run evaluate-model --config config/config.yaml`
 | Prediction          | `poetry run predict-model --config config/config.yaml --features payload.json`
+| Offline workflow    | `poetry run offline-train --config config/config.yaml --data-path /path/to/Housing.csv`
 
 See `docs/PIPELINE_OVERVIEW.md` for a deeper walkthrough of the stages and artifact layout.
 
