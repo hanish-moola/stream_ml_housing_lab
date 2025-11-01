@@ -1,198 +1,131 @@
 # Stream-ML Housing Lab
 
-A production-minded playground for housing price prediction. The lab now ships with a shared feature
-pipeline, an XGBoost regression model tracked in MLflow, a FastAPI inference surface, and Kafka-ready
-streaming primitives to move towards near-real-time predictions and agentic stress testing.
+A reference implementation of a modular, MLflow-enabled housing price pipeline. The repository
+demonstrates how to take a notebook workflow and refactor it into production-friendly scripts with
+clear separation of concerns, reproducible configuration, and auditable artifacts.
 
 ## Project Structure
 
 ```
 stream_ml_housing_lab/
-├── config.py                # Central configuration for data paths, model params, MLflow
-├── requirements.txt         # Python dependencies
+├── config/                 # YAML configuration and overrides
+├── docs/                   # Pipeline and configuration documentation
 ├── src/
-│   ├── train.py             # Offline training entrypoint (MLflow + XGBoost pipeline)
-│   ├── evaluate.py          # Offline evaluation wired into MLflow
-│   ├── serving/             # FastAPI app + request/response schemas
-│   └── streaming/           # Kafka producer + Faust feature processor skeleton
-├── utils/
-│   ├── data_loader.py       # Data ingestion helpers
-│   ├── feature_pipeline.py  # Shared feature transformer utilities
-│   ├── metrics.py           # Regression metrics helpers
-│   ├── pipeline_loader.py   # Centralised pipeline loading helpers
-│   └── visualization.py     # Exploratory and diagnostic plots
-├── results/                 # Model artefacts, visualisations, evaluation reports
-├── mlruns/                  # Local MLflow tracking store
-└── data/                    # Default data drop (created on demand)
+│   ├── config.py           # Config loader with env overrides
+│   ├── data.py             # Dataset loading/splitting helpers
+│   ├── feature_engineering.py  # CLI to fit & persist preprocessing transformers
+│   ├── train.py            # CLI to train model and log artifacts to MLflow
+│   ├── evaluate.py         # CLI to score trained models on hold-out data
+│   ├── predict.py          # CLI to run single predictions with saved pipelines
+│   ├── logging_utils.py    # Project logging setup
+│   └── registry.py         # Artifact persistence and lookup helpers
+├── tests/                  # Pytest coverage for utilities and CLIs
+├── artifacts/              # Generated artifacts (gitignored, .gitkeep for tree)
+├── mlruns/                 # Local MLflow tracking store (gitignored, .gitkeep)
+├── IMPLEMENTATION_PLAN.md  # High-level roadmap
+├── DECISIONS.md            # Architectural decision log
+└── pyproject.toml          # Poetry configuration & dependency manifest
 ```
 
-## What's New in This Iteration
+## Getting Started
 
-- **Unified Feature Pipeline** – ColumnTransformer with scaling + one-hot encoding shared across training,
-  evaluation, serving, and streaming to guarantee parity.
-- **XGBoost Baseline** – Replaces the Keras network with an XGBoost regressor logged via `mlflow.sklearn`
-  and versioned in the registry.
-- **FastAPI Inference Service** – `src/serving/app.py` exposes `/predict`, `/health`, and `/model-info`
-  endpoints and loads the latest pipeline automatically (local artefact or MLflow URI).
-- **Kafka Streaming Skeleton** – `src/streaming/producer.py` streams raw housing events while
-  `src/streaming/feature_processor.py` (Faust) converts them into model-ready feature vectors and
-  predictions.
-- **Lean Dependencies** – Requirements trimmed to the current stack plus the new serving/streaming libs.
+1. **Install dependencies with Poetry**
+   ```bash
+   poetry install
+   ```
 
-## Setup
+2. **Activate the environment (optional)**
+   ```bash
+   poetry shell
+   ```
+
+3. **Configure dataset location** (if different from default)
+   ```bash
+   export HOUSING_DATA_PATH=/path/to/Housing.csv
+   ```
+
+4. **Run the pipeline stages**
+   ```bash
+   poetry run feature-engineering
+   poetry run train-model
+   poetry run evaluate-model
+   poetry run predict-model --features payload.json
+   ```
+
+Each command accepts `--config` for alternative configuration files and `--run-name` to override the
+auto-generated identifier. Evaluation/prediction additionally support `--model-run` to target specific
+training artifacts.
+
+## Command Cheatsheet
+
+| Stage               | Example |
+|---------------------|---------|
+| Feature engineering | `poetry run feature-engineering --config config/config.yaml`
+| Training            | `poetry run train-model --config config/config.yaml`
+| Evaluation          | `poetry run evaluate-model --config config/config.yaml`
+| Prediction          | `poetry run predict-model --config config/config.yaml --features payload.json`
+
+See `docs/PIPELINE_OVERVIEW.md` for a deeper walkthrough of the stages and artifact layout.
+
+## Configuration
+
+Configuration defaults live in `config/config.yaml` and can be overridden via environment variables or
+custom YAML files. A detailed reference is provided in `docs/CONFIG_REFERENCE.md`.
+
+Key overrides:
+- `HOUSING_DATA_PATH` – path to the dataset CSV.
+- `HOUSING_ARTIFACTS_ROOT` – directory for artifact storage.
+- `MLFLOW_TRACKING_URI` – MLflow backend URI (defaults to local `mlruns`).
+
+## MLflow Tracking
+
+The pipeline logs parameters, metrics, and artifacts to MLflow:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
+poetry run mlflow ui --backend-store-uri file:./mlruns
 ```
 
-Alternatively, use Poetry or uv (recommended for speed and lockfile hygiene):
+Open `http://127.0.0.1:5000` to inspect runs, compare metrics, and audit artifacts.
 
-Poetry:
-```bash
-poetry install
-poetry shell
-```
+## Testing
 
-uv (reads pyproject.toml directly):
-```bash
-uv sync          # creates .venv and installs from pyproject
-# or maintain parity with requirements.txt
-uv pip install -r requirements.txt
-```
-
-Most commands rely on the defaults in `config.py`. Override with environment variables when needed
-(e.g. `HOUSING_DATA_PATH`, `HOUSING_MODEL_PATH`, `KAFKA_BROKER_URL`).
-
-## Usage
-
-### 1. Train Offline
+Run the test suite (once dependencies are installed):
 
 ```bash
-python src/train.py
-poetry run python src/train.py
-uv run python src/train.py
+poetry run pytest
 ```
 
-- Loads the configured dataset, fits the shared transformer, trains an XGBoost regressor.
-- Logs metrics, artefacts, and the pipeline to MLflow and `results/models/<run_name>`.
-- Outputs diagnostics (visualisations, feature importance, metadata JSON).
+The tests cover configuration loading, artifact registry behaviour, feature engineering helpers,
+training/evaluation utilities, and prediction payload validation.
 
-### 2. Evaluate a Model Snapshot
+## Dataset Contract
 
-```bash
-# Evaluate the latest artefact under results/models
-python src/evaluate.py
-poetry run python src/evaluate.py
-uv run python src/evaluate.py
+The pipeline expects the following columns (defaults sourced from the original Kaggle dataset):
 
-# Evaluate an explicit folder
-python src/evaluate.py --model-path results/models/training_run_20240101_120000
+| Column             | Type / Values                        | Notes |
+|--------------------|---------------------------------------|-------|
+| `price`            | float                                 | Target variable |
+| `area`             | float                                 | Property area |
+| `bedrooms`         | int                                   | Number of bedrooms |
+| `bathrooms`        | float                                 | Number of bathrooms |
+| `stories`          | int                                   | Number of stories |
+| `parking`          | int                                   | Parking spaces |
+| `mainroad`         | {"yes","no"}                        | Access to main road |
+| `guestroom`        | {"yes","no"}                        | Guest room availability |
+| `basement`         | {"yes","no"}                        | Basement availability |
+| `hotwaterheating`  | {"yes","no"}                        | Hot water heating |
+| `airconditioning`  | {"yes","no"}                        | Air conditioning |
+| `prefarea`         | {"yes","no"}                        | Preferred area indicator |
+| `furnishingstatus` | {"furnished","semi-furnished","unfurnished"} | Furnishing category |
 
-# Evaluate a registered MLflow model version
-python src/evaluate.py --model-uri models:/housing_price_predictor/1
-```
+Additional columns are ignored unless wired into the feature engineering pipeline.
 
-Evaluation logs metrics back to the same MLflow experiment and produces plots under
-`results/evaluation/<run_name>`.
+## Additional Documentation
 
-### 3. Serve Predictions via FastAPI
-
-```bash
-# Load latest local artefact (after training)
-uvicorn src.serving.app:app --reload
-
-# Or point to a specific model directory / MLflow URI
-HOUSING_MODEL_PATH=results/models/training_run_... uvicorn src.serving.app:app
-HOUSING_MODEL_URI=models:/housing_price_predictor/Production uvicorn src.serving.app:app
-```
-
-Endpoints:
-- `GET /health` – readiness signal with current model version
-- `GET /model-info` – feature order, categorical config, source metadata
-- `POST /predict` – accepts housing features, returns `estimated_price`
-
-Example request:
-
-```bash
-curl -X POST http://127.0.0.1:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "area": 3500,
-    "bedrooms": 3,
-    "bathrooms": 2,
-    "stories": 2,
-    "parking": 1,
-    "mainroad": "yes",
-    "guestroom": "no",
-    "basement": "no",
-    "hotwaterheating": "no",
-    "airconditioning": "yes",
-    "prefarea": "no",
-    "furnishingstatus": "semi-furnished"
-  }'
-```
-
-### 4. Stream Raw Events into Kafka (Prototype)
-
-```bash
-# Publish dataset rows into a raw Kafka topic (dry run just prints JSON)
-python src/streaming/producer.py --dry-run --limit 5
-python src/streaming/producer.py --bootstrap localhost:9092 --topic raw_housing
-```
-
-The producer converts historic rows into the canonical feature payload defined for serving.
-
-### 5. Online Feature Parity with Faust (Prototype)
-
-```bash
-faust -A src.streaming.feature_processor worker -l info
-```
-
-The agent consumes the raw topic, applies the shared feature transformer, and publishes both the
-feature vector and the associated prediction to downstream topics (`feature_housing`, `predictions_housing`).
-This creates the backbone for shadow serving, drift monitoring, and multi-agent stress drills.
-
-## Data Contract
-
-The housing dataset should provide the following columns:
-
-| Column             | Type    | Notes                              |
-|--------------------|---------|------------------------------------|
-| `price`            | float   | Supervised target (USD)            |
-| `area`             | float   | Property area                      |
-| `bedrooms`         | int     | Number of bedrooms                 |
-| `bathrooms`        | float   | Number of bathrooms                |
-| `stories`          | int     | Number of stories                  |
-| `parking`          | int     | Parking spots                      |
-| `mainroad`         | yes/no  | Categorical (access to main road)  |
-| `guestroom`        | yes/no  | Categorical                        |
-| `basement`         | yes/no  | Categorical                        |
-| `hotwaterheating`  | yes/no  | Categorical                        |
-| `airconditioning`  | yes/no  | Categorical                        |
-| `prefarea`         | yes/no  | Categorical                        |
-| `furnishingstatus` | string  | `furnished`, `semi-furnished`, `unfurnished` |
-| `Address`          | string  | High-cardinality (dropped for now) |
-
-Set `HOUSING_DATA_PATH` to point at your CSV if it differs from the default.
-
-## MLflow Quickstart
-
-```bash
-mlflow ui --backend-store-uri file:./mlruns
-```
-
-Browse experiments, compare runs, and promote the registered `housing_price_predictor` model.
-
-## Next Steps
-
-- Wire Kafka topics into observability and drift detectors
-- Add guardrail agents that react to metrics streamed out of the Faust app
-- Extend the FastAPI surface with batch prediction and schema validation endpoints
-- Deploy the full stack via Docker Compose for reproducible local drills
+- `docs/PIPELINE_OVERVIEW.md` – end-to-end flow and CLI reference
+- `docs/CONFIG_REFERENCE.md` – configuration key details and overrides
+- `DECISIONS.md` – running log of architectural choices
 
 ## License
 
-Apache-2.0 — see `LICENSE` if/when it lands. Current work authored by Hanish Moola.
+Apache-2.0 (see `LICENSE` when available). Authored by Hanish Moola.
