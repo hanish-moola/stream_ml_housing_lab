@@ -7,3 +7,5 @@
 - Established shared utility modules (`src/data.py`, `src/registry.py`, `src/logging_utils.py`) to centralise data access, artifact management, and logging, enabling later pipeline stages to compose these primitives.
 - Seeded lightweight pytest coverage for config loading and artifact registry behaviour to guard future refactors.
 - Designed Phase 2 feature engineering module to infer feature types dynamically, persist preprocessing artifacts, and log metadata to MLflow for reproducibility.
+
+- Completed Phase 3 training pipeline: reuses persisted transformers, logs comprehensive metrics/artifacts to MLflow, and persists an inference-ready sklearn pipeline.
