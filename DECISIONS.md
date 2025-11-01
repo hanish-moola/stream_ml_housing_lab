@@ -10,4 +10,5 @@
 
 - Completed Phase 3 training pipeline: reuses persisted transformers, logs comprehensive metrics/artifacts to MLflow, and persists an inference-ready sklearn pipeline.
 - Added evaluation pipeline to reuse packaged model artifacts, produce independent holdout metrics, and persist evaluation outputs for auditability.
+- Implemented prediction CLI that aligns payloads with saved feature metadata, ensuring inference parity and emitting MLflow prediction logs.
 
