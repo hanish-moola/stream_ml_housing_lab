@@ -7,57 +7,63 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import joblib
+import tempfile
 import mlflow
 import pandas as pd
 
-from .config import ArtifactsConfig, ProjectConfig, load_config
+from mlflow.tracking import MlflowClient
+
+from .config import ProjectConfig, load_config
 from .data import load_raw_data, split_features_target, stratified_train_test_split
 from .logging_utils import configure_logging, get_logger
 from .mlflow_utils import ensure_run
 from .registry import (
     build_run_name,
-    load_model,
-    prepare_run_artifacts,
-    resolve_latest_run,
-    write_metadata,
+    download_artifact,
+    get_latest_run_by_stage,
 )
 from .train import _compute_metrics
 
 logger = get_logger(__name__)
 
 
-def _resolve_model_artifacts(
-    artifacts_cfg: ArtifactsConfig,
-    model_run_dir: Optional[Path] = None,
-) -> Dict[str, Path]:
-    if model_run_dir is not None:
-        run_dir = model_run_dir
+def _get_run(run_id: Optional[str], experiment_name: str) -> mlflow.entities.Run:
+    client = MlflowClient()
+    if run_id:
+        return client.get_run(run_id)
+    run = get_latest_run_by_stage(experiment_name, "training")
+    if run is None:
+        raise FileNotFoundError("No training run found. Train a model first.")
+    return run
+
+
+def _load_model_and_transformer(run: mlflow.entities.Run):
+    model_type = run.data.params.get("model_type", "linear_regression")
+    run_uri = f"runs:/{run.info.run_id}/model"
+
+    if model_type == "neural_network":
+        keras_model = mlflow.keras.load_model(run_uri)
+        transformer_path = download_artifact(run.info.run_id, "transformer/transformer.joblib")
+        transformer = joblib.load(transformer_path)
+
+        def predict_fn(X: pd.DataFrame) -> pd.Series:
+            features = transformer.transform(X).astype("float32")
+            preds = keras_model.predict(features, verbose=0).flatten()
+            return preds
+
     else:
-        latest = resolve_latest_run(artifacts_cfg)
-        if latest is None or not latest.model_path.exists():
-            raise FileNotFoundError("No trained model artifacts found. Train a model first.")
-        run_dir = latest.run_dir
+        pipeline = mlflow.sklearn.load_model(run_uri)
 
-    model_path = run_dir / artifacts_cfg.model_subdir / "model.joblib"
-    transformer_path = run_dir / artifacts_cfg.transformer_subdir / "transformer.joblib"
-    metadata_path = run_dir / "metadata.json"
+        def predict_fn(X: pd.DataFrame) -> pd.Series:
+            return pipeline.predict(X)
 
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model artifact missing: {model_path}")
-    if not transformer_path.exists():
-        raise FileNotFoundError(f"Transformer artifact missing: {transformer_path}")
-
-    return {
-        "run_dir": run_dir,
-        "model": model_path,
-        "transformer": transformer_path,
-        "metadata": metadata_path,
-    }
+    return predict_fn, model_type
 
 
 def run_evaluation(
     config: ProjectConfig,
-    model_run_dir: Optional[Path] = None,
+    model_run_id: Optional[str] = None,
     run_name: Optional[str] = None,
 ) -> None:
     configure_logging()
@@ -67,64 +73,49 @@ def run_evaluation(
 
     base_run_name = run_name or build_run_name(config.mlflow.run_name_template)
     effective_run_name = f"evaluation_{base_run_name}" if not run_name else run_name
-    artifacts = prepare_run_artifacts(config.artifacts, effective_run_name)
 
-    model_artifacts = _resolve_model_artifacts(config.artifacts, model_run_dir)
-    pipeline = load_model(model_artifacts["model"])
+    target_run = _get_run(model_run_id, config.mlflow.experiment_name)
+    predict_fn, model_type = _load_model_and_transformer(target_run)
 
     with ensure_run(effective_run_name) as run:
-        logger.info("Evaluating model run %s", model_artifacts["run_dir"])
+        mlflow.set_tag("stage", "evaluation")
+        mlflow.log_param("evaluated_model_run_id", target_run.info.run_id)
+        mlflow.log_param("evaluated_model_type", model_type)
 
         df = load_raw_data(config.data)
         X, y = split_features_target(df, config.data)
         _, X_test, _, y_test = stratified_train_test_split(X, y, config.data)
 
-        predictions = pipeline.predict(X_test)
+        predictions = predict_fn(X_test)
         metrics = _compute_metrics(y_test.to_numpy(), predictions)
         mlflow.log_metrics({f"eval_{k}": v for k, v in metrics.items()})
+        mlflow.log_dict(metrics, "evaluation_metrics.json")
 
-        metrics_path = artifacts.metrics_path
-        metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        with metrics_path.open("w", encoding="utf-8") as handle:
-            json.dump(metrics, handle, indent=2)
-        mlflow.log_artifact(str(metrics_path))
-
-        evaluation_df = pd.DataFrame({
+        results_df = pd.DataFrame({
             "y_true": y_test,
             "y_pred": predictions,
             "residual": y_test - predictions,
         })
-        predictions_path = metrics_path.parent / "evaluation_predictions.csv"
-        evaluation_df.to_csv(predictions_path, index=False)
-        mlflow.log_artifact(str(predictions_path))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "evaluation_predictions.csv"
+            results_df.to_csv(path, index=False)
+            mlflow.log_artifact(str(path), artifact_path="evaluation")
 
-        mlflow.log_params(
-            {
-                "evaluation_model_run": str(model_artifacts["run_dir"]),
-                "evaluation_dataset": str(config.data.raw_data_path),
-            }
-        )
-        mlflow.set_tag("evaluation", True)
-
-        evaluation_metadata = {
+        metadata = {
             "evaluation_run": effective_run_name,
             "mlflow_run_id": run.info.run_id,
-            "evaluated_model": str(model_artifacts["model"]),
+            "evaluated_model_run_id": target_run.info.run_id,
             "metrics": metrics,
-            "artifacts": {
-                "metrics": str(metrics_path),
-                "predictions": str(predictions_path),
-            },
         }
-        write_metadata(evaluation_metadata, artifacts.metadata_path)
+        mlflow.log_dict(metadata, "evaluation_metadata.json")
 
-        logger.info("Evaluation complete. Metrics stored at %s", metrics_path)
+        logger.info("Evaluation complete for model run %s", target_run.info.run_id)
 
 
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate the latest trained housing price model")
     parser.add_argument("--config", type=Path, help="Optional path to configuration YAML")
-    parser.add_argument("--model-run", type=Path, help="Optional path to a specific training run directory")
+    parser.add_argument("--model-run", type=str, help="Optional training run ID to evaluate")
     parser.add_argument("--run-name", type=str, help="Optional explicit evaluation run name")
     return parser.parse_args(args)
 
@@ -132,7 +123,7 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[List[str]] = None) -> None:
     cli_args = parse_args(argv)
     config = load_config(path=cli_args.config)
-    run_evaluation(config, model_run_dir=cli_args.model_run, run_name=cli_args.run_name)
+    run_evaluation(config, model_run_id=cli_args.model_run, run_name=cli_args.run_name)
 
 
 if __name__ == "__main__":  # pragma: no cover

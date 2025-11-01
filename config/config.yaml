@@ -11,12 +11,6 @@ data:
   test_size: 0.2
   random_state: 42
 
-artifacts:
-  root: "artifacts"
-  transformer_subdir: "transformers"
-  model_subdir: "models"
-  metrics_subdir: "metrics"
-
 mlflow:
   experiment_name: "housing_price_workflow"
   tracking_uri: "mlruns"

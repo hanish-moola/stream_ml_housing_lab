@@ -7,101 +7,100 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import joblib
 import mlflow
 import pandas as pd
 
+from mlflow.tracking import MlflowClient
+
 from .config import ProjectConfig, load_config
-from .feature_engineering import FeatureMetadata
 from .logging_utils import configure_logging, get_logger
 from .mlflow_utils import ensure_run
 from .registry import (
     build_run_name,
-    load_metadata,
-    load_model,
-    resolve_latest_run,
+    download_artifact,
+    get_latest_run_by_stage,
 )
 
 logger = get_logger(__name__)
 
 
-def _resolve_model_artifacts(config: ProjectConfig, run_dir: Optional[Path]) -> Dict[str, Path]:
-    if run_dir:
-        model_path = run_dir / config.artifacts.model_subdir / "model.joblib"
-        metadata_path = run_dir / "metadata.json"
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found at {model_path}")
-        if not metadata_path.exists():
-            raise FileNotFoundError(f"Training metadata missing: {metadata_path}")
-        return {"model": model_path, "metadata": metadata_path}
-
-    latest = resolve_latest_run(config.artifacts)
-    if latest is None or not latest.model_path.exists():
-        raise FileNotFoundError("No trained model artifacts found")
-
-    metadata_path = latest.metadata_path
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Training metadata missing: {metadata_path}")
-
-    return {"model": latest.model_path, "metadata": metadata_path}
+def _get_training_run(run_id: Optional[str], experiment_name: str) -> mlflow.entities.Run:
+    client = MlflowClient()
+    if run_id:
+        return client.get_run(run_id)
+    run = get_latest_run_by_stage(experiment_name, "training")
+    if run is None:
+        raise FileNotFoundError("No training run found. Train a model first.")
+    return run
 
 
-def _load_feature_metadata(training_metadata: Dict[str, object]) -> FeatureMetadata:
-    feature_meta_path = training_metadata.get("feature_artifacts", {}).get("metadata")
-    if not feature_meta_path:
-        raise RuntimeError("Training metadata does not reference feature metadata path")
+def _load_prediction_pipeline(run: mlflow.entities.Run):
+    model_type = run.data.params.get("model_type", "linear_regression")
+    model_uri = f"runs:/{run.info.run_id}/model"
 
-    path = Path(feature_meta_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Feature metadata file missing: {path}")
+    if model_type == "neural_network":
+        transformer_path = download_artifact(run.info.run_id, "transformer/transformer.joblib")
+        transformer = joblib.load(transformer_path)
+        keras_model = mlflow.keras.load_model(model_uri)
 
-    with path.open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    return FeatureMetadata(**payload)
+        def predict_fn(features: pd.DataFrame) -> float:
+            transformed = transformer.transform(features).astype("float32")
+            return float(keras_model.predict(transformed, verbose=0).flatten()[0])
+
+        feature_metadata_path = download_artifact(run.info.run_id, "feature_metadata.json")
+        with feature_metadata_path.open("r", encoding="utf-8") as handle:
+            feature_metadata = json.load(handle)
+    else:
+        pipeline = mlflow.sklearn.load_model(model_uri)
+
+        def predict_fn(features: pd.DataFrame) -> float:
+            return float(pipeline.predict(features)[0])
+
+        feature_metadata_path = download_artifact(run.info.run_id, "feature_metadata.json")
+        with feature_metadata_path.open("r", encoding="utf-8") as handle:
+            feature_metadata = json.load(handle)
+
+    return predict_fn, feature_metadata, model_type
 
 
-def _prepare_feature_dataframe(
-    features: Dict[str, object],
-    feature_metadata: FeatureMetadata,
-) -> pd.DataFrame:
-    expected_columns = feature_metadata.numeric + feature_metadata.categorical
-    missing = [col for col in expected_columns if col not in features]
+def _prepare_feature_dataframe(features: Dict[str, object], feature_metadata: Dict[str, List[str]]) -> pd.DataFrame:
+    expected = feature_metadata.get("numeric", []) + feature_metadata.get("categorical", [])
+    missing = [col for col in expected if col not in features]
     if missing:
         raise ValueError(f"Missing required feature(s): {missing}")
-
-    ordered = {col: features[col] for col in expected_columns}
-    df = pd.DataFrame([ordered])
-    return df
+    ordered = {col: features[col] for col in expected}
+    return pd.DataFrame([ordered])
 
 
 def run_prediction(
     config: ProjectConfig,
     input_features: Dict[str, object],
-    run_dir: Optional[Path] = None,
+    run_id: Optional[str] = None,
     run_name: Optional[str] = None,
 ) -> float:
     configure_logging()
     mlflow.set_tracking_uri(config.mlflow.tracking_uri)
     mlflow.set_experiment(config.mlflow.experiment_name)
 
-    artifacts = _resolve_model_artifacts(config, run_dir)
-    training_metadata = load_metadata(artifacts["metadata"])
-    feature_metadata = _load_feature_metadata(training_metadata)
-
-    pipeline = load_model(artifacts["model"])
+    training_run = _get_training_run(run_id, config.mlflow.experiment_name)
+    predict_fn, feature_metadata, model_type = _load_prediction_pipeline(training_run)
 
     features_df = _prepare_feature_dataframe(input_features, feature_metadata)
-    prediction = float(pipeline.predict(features_df)[0])
+    prediction = predict_fn(features_df)
 
     effective_run_name = run_name or build_run_name("prediction_{timestamp}")
     with ensure_run(effective_run_name) as run:
         mlflow.log_params({f"feature_{k}": v for k, v in input_features.items()})
+        mlflow.log_param("source_model_run_id", training_run.info.run_id)
+        mlflow.log_param("source_model_type", model_type)
         mlflow.log_metric("prediction", prediction)
         mlflow.set_tag("prediction", True)
-        mlflow.set_tag("source_model", str(artifacts["model"]))
         logger.info(
-            "Prediction run %s | model=%s | prediction=%.2f",
+            "Prediction run %s | model_run=%s | model_type=%s | prediction=%.2f",
             run.info.run_id,
-            artifacts["model"],
+            training_run.info.run_id,
+            model_type,
             prediction,
         )
 
@@ -111,7 +110,7 @@ def run_prediction(
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a prediction from the housing price model")
     parser.add_argument("--config", type=Path, help="Optional path to configuration YAML")
-    parser.add_argument("--model-run", type=Path, help="Optional path to a specific training run directory")
+    parser.add_argument("--model-run", type=str, help="Optional training run ID to use for predictions")
     parser.add_argument("--features", type=Path, required=True, help="Path to JSON file containing feature values")
     parser.add_argument("--run-name", type=str, help="Optional explicit prediction run name")
     return parser.parse_args(args)
@@ -127,7 +126,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     prediction = run_prediction(
         config,
         input_features=features,
-        run_dir=cli_args.model_run,
+        run_id=cli_args.model_run,
         run_name=cli_args.run_name,
     )
 

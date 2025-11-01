@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import joblib
 from typing import Any, Dict, List, Optional
 
 import mlflow
@@ -17,43 +18,38 @@ from sklearn.pipeline import Pipeline
 from .config import ProjectConfig, load_config
 from .data import load_raw_data, split_features_target, stratified_train_test_split
 from .feature_engineering import FeatureMetadata, run_feature_engineering
-from .models.pipelines import KerasRegressionPipeline
 from .logging_utils import configure_logging, get_logger
 from .mlflow_utils import ensure_run
 from .registry import (
     build_run_name,
-    load_transformer,
-    prepare_run_artifacts,
-    resolve_latest_run,
-    save_model,
-    save_transformer,
-    write_metadata,
+    get_latest_run_by_stage,
+    download_artifact,
 )
 
 logger = get_logger(__name__)
 
 
 def _resolve_feature_artifacts(config: ProjectConfig) -> Dict[str, Path]:
-    """Ensure a fitted feature transformer exists and return its artifact paths."""
+    """Ensure a fitted feature transformer exists and return downloaded artifacts."""
 
-    latest_run = resolve_latest_run(config.artifacts)
-    if latest_run is None or not latest_run.transformer_path.exists():
-        logger.info("No feature artifacts detected. Triggering feature engineering run.")
+    feature_run = get_latest_run_by_stage(config.mlflow.experiment_name, "feature_engineering")
+    if feature_run is None:
+        logger.info("No feature-engineering run found; triggering one now")
         run_feature_engineering(config)
-        latest_run = resolve_latest_run(config.artifacts)
-        if latest_run is None:
-            raise RuntimeError("Feature engineering did not produce artifacts")
+        feature_run = get_latest_run_by_stage(config.mlflow.experiment_name, "feature_engineering")
+        if feature_run is None:
+            raise RuntimeError("Feature engineering did not produce an MLflow run")
 
-    metadata_path = latest_run.run_dir / "feature_metadata.json"
-    stats_path = latest_run.run_dir / "training_stats.json"
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Expected feature metadata at {metadata_path}")
+    run_id = feature_run.info.run_id
+    transformer_path = download_artifact(run_id, "transformer/transformer.joblib")
+    metadata_path = download_artifact(run_id, "feature_metadata.json")
+    stats_path = download_artifact(run_id, "training_stats.json")
 
     return {
-        "transformer": latest_run.transformer_path,
+        "run_id": run_id,
+        "transformer": transformer_path,
         "metadata": metadata_path,
         "stats": stats_path,
-        "run_dir": latest_run.run_dir,
     }
 
 
@@ -119,7 +115,6 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
     mlflow.set_experiment(config.mlflow.experiment_name)
 
     effective_run_name = run_name or build_run_name(config.mlflow.run_name_template)
-    artifacts = prepare_run_artifacts(config.artifacts, effective_run_name)
 
     feature_artifacts = _resolve_feature_artifacts(config)
     with feature_artifacts["metadata"].open("r", encoding="utf-8") as handle:
@@ -127,19 +122,20 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
 
     with ensure_run(effective_run_name) as run:
         logger.info("Starting training run: %s using model type %s", run.info.run_id, config.model.type)
+        mlflow.set_tag("stage", "training")
 
         df = load_raw_data(config.data)
         X, y = split_features_target(df, config.data)
         X_train, X_test, y_train, y_test = stratified_train_test_split(X, y, config.data)
 
-        transformer = load_transformer(feature_artifacts["transformer"])
-        save_transformer(transformer, artifacts.transformer_path)
+        transformer = joblib.load(feature_artifacts["transformer"])
 
         X_train_transformed = transformer.transform(X_train)
         X_test_transformed = transformer.transform(X_test)
 
         model_type = config.model.type
         hyperparameters = config.model.hyperparameters
+        mlflow.log_param("model_type", model_type)
 
         if model_type == "neural_network":
             X_train_transformed = X_train_transformed.astype("float32")
@@ -168,27 +164,24 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
 
         metrics = _compute_metrics(y_test.to_numpy(), predictions)
         _log_training_summary(config, metrics, effective_run_name)
-
-        metrics_path = artifacts.metrics_path
-        metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        with metrics_path.open("w", encoding="utf-8") as handle:
-            json.dump(metrics, handle, indent=2)
-        mlflow.log_artifact(str(metrics_path))
+        mlflow.log_dict(metrics, "metrics.json")
+        mlflow.log_dict(feature_metadata.to_dict(), "feature_metadata.json")
 
         results_df = pd.DataFrame({
             "y_true": y_test,
             "y_pred": predictions,
             "residual": y_test - predictions,
         })
-        predictions_path = metrics_path.parent / "predictions.csv"
-        results_df.to_csv(predictions_path, index=False)
-        mlflow.log_artifact(str(predictions_path))
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            predictions_path = Path(tmp_dir) / "predictions.csv"
+            results_df.to_csv(predictions_path, index=False)
+            mlflow.log_artifact(str(predictions_path), artifact_path="predictions")
+
+        mlflow.log_artifact(str(feature_artifacts["transformer"]), artifact_path="transformer")
 
         if model_type == "neural_network":
-            keras_model_dir = artifacts.model_path.parent / "keras_model"
-            model.save(keras_model_dir)
-            inference_pipeline = KerasRegressionPipeline(transformer, keras_model_dir)
-            save_model(inference_pipeline, artifacts.model_path)
             mlflow.keras.log_model(model, artifact_path="model")
         else:
             inference_pipeline = Pipeline(
@@ -197,32 +190,18 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
                     ("model", model),
                 ]
             )
-            save_model(inference_pipeline, artifacts.model_path)
             mlflow.sklearn.log_model(inference_pipeline, artifact_path="model")
-            keras_model_dir = None
 
         run_metadata = {
             "run_name": effective_run_name,
             "mlflow_run_id": run.info.run_id,
             "model_type": model_type,
-            "feature_artifacts": {
-                "source_run_dir": str(feature_artifacts["run_dir"]),
-                "transformer": str(feature_artifacts["transformer"]),
-                "metadata": str(feature_artifacts["metadata"]),
-            },
-            "artifacts": {
-                "model": str(artifacts.model_path),
-                "transformer": str(artifacts.transformer_path),
-                "metrics": str(metrics_path),
-                "predictions": str(predictions_path),
-            },
+            "feature_run_id": feature_artifacts["run_id"],
             "metrics": metrics,
         }
-        if keras_model_dir is not None:
-            run_metadata["artifacts"]["keras_model"] = str(keras_model_dir)
-        write_metadata(run_metadata, artifacts.metadata_path)
+        mlflow.log_dict(run_metadata, "run_metadata.json")
 
-        logger.info("Training complete. Model stored at %s", artifacts.model_path)
+        logger.info("Training complete; model logged to MLflow")
 
 
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:

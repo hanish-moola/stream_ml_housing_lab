@@ -2,24 +2,35 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.config import ArtifactsConfig
-from src.registry import prepare_run_artifacts, resolve_latest_run
+import mlflow
+
+from src.registry import get_latest_run_by_stage, download_artifact
 
 
-def test_prepare_run_artifacts_creates_structure(tmp_path):
-    cfg = ArtifactsConfig(root=tmp_path)
-    paths = prepare_run_artifacts(cfg, "test_run")
+def test_get_latest_run_by_stage(tmp_path, monkeypatch):
+    tracking_uri = tmp_path / "mlruns"
+    mlflow.set_tracking_uri(str(tracking_uri))
+    mlflow.set_experiment("registry-test")
 
-    assert paths.model_path.parent.exists()
-    assert paths.transformer_path.parent.exists()
-    assert paths.metrics_path.parent.exists()
+    with mlflow.start_run(run_name="old") as old_run:
+        mlflow.set_tag("stage", "feature_engineering")
+    with mlflow.start_run(run_name="new") as new_run:
+        mlflow.set_tag("stage", "feature_engineering")
+
+    latest = get_latest_run_by_stage("registry-test", "feature_engineering")
+    assert latest is not None
+    assert latest.info.run_id == new_run.info.run_id
 
 
-def test_resolve_latest_run(tmp_path):
-    cfg = ArtifactsConfig(root=tmp_path)
-    _ = prepare_run_artifacts(cfg, "run1")
-    paths_latest = prepare_run_artifacts(cfg, "run2")
+def test_download_artifact(tmp_path, monkeypatch):
+    tracking_uri = tmp_path / "mlruns"
+    mlflow.set_tracking_uri(str(tracking_uri))
+    mlflow.set_experiment("registry-download")
 
-    resolved = resolve_latest_run(cfg)
-    assert resolved is not None
-    assert resolved.run_dir == paths_latest.run_dir
+    with mlflow.start_run() as run:
+        artifact_file = tmp_path / "sample.txt"
+        artifact_file.write_text("hello")
+        mlflow.log_artifact(str(artifact_file), artifact_path="bundle")
+
+    downloaded = download_artifact(run.info.run_id, "bundle/sample.txt")
+    assert downloaded.read_text() == "hello"
