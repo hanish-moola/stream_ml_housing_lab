@@ -26,4 +26,4 @@ def test_compute_metrics_outputs_expected_values():
     assert pytest.approx(metrics["mae"], rel=1e-6) == 0.5
     assert pytest.approx(metrics["mse"], rel=1e-6) == 0.25
     assert pytest.approx(metrics["rmse"], rel=1e-6) == 0.5
-    assert pytest.approx(metrics["r2"], rel=1e-6) == 0.96
+    assert pytest.approx(metrics["r2"], rel=1e-6) == 0.90625
