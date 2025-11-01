@@ -208,3 +208,6 @@ __marimo__/
 
 
 IMPLEMENTATION_PLAN.md
+DECISIONS.md
+
+poetry.lock
