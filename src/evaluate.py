@@ -13,6 +13,7 @@ import pandas as pd
 from .config import ArtifactsConfig, ProjectConfig, load_config
 from .data import load_raw_data, split_features_target, stratified_train_test_split
 from .logging_utils import configure_logging, get_logger
+from .mlflow_utils import ensure_run
 from .registry import (
     build_run_name,
     load_model,
@@ -71,7 +72,7 @@ def run_evaluation(
     model_artifacts = _resolve_model_artifacts(config.artifacts, model_run_dir)
     pipeline = load_model(model_artifacts["model"])
 
-    with mlflow.start_run(run_name=effective_run_name) as run:
+    with ensure_run(effective_run_name) as run:
         logger.info("Evaluating model run %s", model_artifacts["run_dir"])
 
         df = load_raw_data(config.data)

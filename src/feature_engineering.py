@@ -18,6 +18,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from .config import ProjectConfig, load_config
 from .data import load_raw_data, split_features_target, stratified_train_test_split
 from .logging_utils import configure_logging, get_logger
+from .mlflow_utils import ensure_run
 from .registry import (
     build_run_name,
     prepare_run_artifacts,
@@ -156,7 +157,7 @@ def run_feature_engineering(config: ProjectConfig, run_name: Optional[str] = Non
     effective_run_name = run_name or build_run_name(config.mlflow.run_name_template)
     artifacts = prepare_run_artifacts(config.artifacts, effective_run_name)
 
-    with mlflow.start_run(run_name=effective_run_name) as run:
+    with ensure_run(effective_run_name) as run:
         logger.info("Starting feature engineering run: %s", run.info.run_id)
 
         transformer, feature_metadata, stats = _fit_transformer_and_metadata(config, effective_run_name)

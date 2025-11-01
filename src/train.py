@@ -18,6 +18,7 @@ from .config import ProjectConfig, load_config
 from .data import load_raw_data, split_features_target, stratified_train_test_split
 from .feature_engineering import FeatureMetadata, run_feature_engineering
 from .logging_utils import configure_logging, get_logger
+from .mlflow_utils import ensure_run
 from .registry import (
     build_run_name,
     load_transformer,
@@ -97,7 +98,7 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
     with feature_artifacts["metadata"].open("r", encoding="utf-8") as handle:
         feature_metadata = FeatureMetadata(**json.load(handle))
 
-    with mlflow.start_run(run_name=effective_run_name) as run:
+    with ensure_run(effective_run_name) as run:
         logger.info("Starting training run: %s", run.info.run_id)
 
         df = load_raw_data(config.data)

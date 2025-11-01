@@ -13,6 +13,7 @@ import pandas as pd
 from .config import ProjectConfig, load_config
 from .feature_engineering import FeatureMetadata
 from .logging_utils import configure_logging, get_logger
+from .mlflow_utils import ensure_run
 from .registry import (
     build_run_name,
     load_metadata,
@@ -92,7 +93,7 @@ def run_prediction(
     prediction = float(pipeline.predict(features_df)[0])
 
     effective_run_name = run_name or build_run_name("prediction_{timestamp}")
-    with mlflow.start_run(run_name=effective_run_name) as run:
+    with ensure_run(effective_run_name) as run:
         mlflow.log_params({f"feature_{k}": v for k, v in input_features.items()})
         mlflow.log_metric("prediction", prediction)
         mlflow.set_tag("prediction", True)
