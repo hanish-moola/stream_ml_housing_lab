@@ -126,7 +126,7 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
         feature_metadata = FeatureMetadata(**json.load(handle))
 
     with ensure_run(effective_run_name) as run:
-        logger.info("Starting training run: %s", run.info.run_id)
+        logger.info("Starting training run: %s using model type %s", run.info.run_id, config.model.type)
 
         df = load_raw_data(config.data)
         X, y = split_features_target(df, config.data)
