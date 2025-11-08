@@ -28,5 +28,5 @@ model:
     activation: relu
     dropout: 0.1
     learning_rate: 0.001
-    epochs: 200
+    epochs: 10
     batch_size: 32
