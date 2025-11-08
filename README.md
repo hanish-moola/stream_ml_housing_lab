@@ -83,7 +83,7 @@ Serve the latest offline-trained model over HTTP with:
 poetry run serve-api
 ```
 
-Environment variables `HOUSING_CONFIG_PATH`, `HOUSING_API_HOST`, and `HOUSING_API_PORT` can override the configuration file location and bind address (default `0.0.0.0:8000`). The `/predict` endpoint accepts a JSON payload with partial feature input; any omitted or `null` fields are imputed from the training statistics that were logged alongside the model.
+Environment variables `HOUSING_CONFIG_PATH`, `HOUSING_API_HOST`, and `HOUSING_API_PORT` can override the configuration file location and bind address (default `0.0.0.0:8000`). The `/predict` endpoint accepts a JSON payload with partial feature input; any omitted or `null` fields are imputed from the training statistics that were logged alongside the model. Add an optional `run_id` attribute to pin inference to a specific MLflow run, or omit it to default to the latest training run tagged `stage=training`.
 
 Example request:
 
@@ -96,11 +96,13 @@ curl -X POST http://localhost:8000/predict \
           "bedrooms": 3,
           "bathrooms": null,
           "stories": 2
-        }
+        },
+        "run_id": "4010d0beaa3d4203a207cde2f7154a26",
+        "refresh": true
       }'
 ```
 
-The response includes the prediction, which features were auto-filled, and the MLflow run id for traceability. Add `"refresh": true` to the payload to force the server to pull the most recent training artifacts before serving the request.
+The response includes the prediction, which features were auto-filled, and the MLflow run id for traceability. Add `"refresh": true` to the payload to force the server to pull the most recent training artifacts before serving the request (useful if that run was just produced).
 
 ## Configuration
 
