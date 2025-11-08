@@ -1,0 +1,11 @@
+{
+  "evaluation_run": "run_20251108_194201_eval",
+  "mlflow_run_id": "d6678876f6f241968b30654e5b2d4bbb",
+  "evaluated_model_run_id": "d6678876f6f241968b30654e5b2d4bbb",
+  "metrics": {
+    "mae": 970043.4039201648,
+    "mse": 1754318687330.6694,
+    "rmse": 1324506.9600914407,
+    "r2": 0.6529242642153172
+  }
+}

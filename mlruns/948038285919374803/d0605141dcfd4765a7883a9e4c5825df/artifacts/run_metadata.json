@@ -1,0 +1,12 @@
+{
+  "run_name": "run_20251108_193738_train",
+  "mlflow_run_id": "d0605141dcfd4765a7883a9e4c5825df",
+  "model_type": "linear_regression",
+  "feature_run_id": "d0605141dcfd4765a7883a9e4c5825df",
+  "metrics": {
+    "mae": 970043.4039201648,
+    "mse": 1754318687330.6694,
+    "rmse": 1324506.9600914407,
+    "r2": 0.6529242642153172
+  }
+}

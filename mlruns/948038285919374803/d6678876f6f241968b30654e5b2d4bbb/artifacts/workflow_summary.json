@@ -1,0 +1,9 @@
+{
+  "workflow_run": "run_20251108_194201",
+  "dataset_path": "data/Housing.csv",
+  "stages": {
+    "feature_engineering": "d6678876f6f241968b30654e5b2d4bbb",
+    "training": "d6678876f6f241968b30654e5b2d4bbb",
+    "evaluation": "d6678876f6f241968b30654e5b2d4bbb"
+  }
+}

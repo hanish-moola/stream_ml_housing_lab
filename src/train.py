@@ -144,13 +144,14 @@ def run_training(config: ProjectConfig, run_name: Optional[str] = None) -> None:
             epochs = int(hyperparameters.get("epochs", 200))
             batch_size = int(hyperparameters.get("batch_size", 32))
             validation_split = float(hyperparameters.get("validation_split", 0.1))
+            logger.info("Training neural network: %d epochs, batch_size=%d", epochs, batch_size)
             history = model.fit(
                 X_train_transformed,
                 y_train.to_numpy().astype("float32"),
                 epochs=epochs,
                 batch_size=batch_size,
                 validation_split=validation_split,
-                verbose=0,
+                verbose=1,  # Show progress bar
             )
             predictions = model.predict(X_test_transformed, verbose=0).flatten()
             if history.history.get("loss"):

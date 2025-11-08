@@ -1,0 +1,15 @@
+{
+  "price": 0,
+  "area": 0,
+  "bedrooms": 0,
+  "bathrooms": 0,
+  "stories": 0,
+  "mainroad": 0,
+  "guestroom": 0,
+  "basement": 0,
+  "hotwaterheating": 0,
+  "airconditioning": 0,
+  "parking": 0,
+  "prefarea": 0,
+  "furnishingstatus": 0
+}
