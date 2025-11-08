@@ -16,3 +16,6 @@
 - Expanded training stack to support neural network models (TensorFlow) and created lazy-loading pipelines for inference parity.
 - Dropped the local `artifacts/` directory in favour of MLflow-managed artifacts; everything now downloads directly from run storage.
 
+## 2025-11-08
+- Added a FastAPI service layer with shared inference utilities so offline-trained models can be served with feature imputation while keeping MLflow as the single source of truth for artifacts.
+- Extended the inference service and API contract to accept an explicit `run_id`, letting consumers pin predictions to a specific MLflow run instead of always using the most recent training stage. This required multi-run caching and stronger error handling for missing runs.

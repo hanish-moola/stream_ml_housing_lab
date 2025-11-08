@@ -11,9 +11,11 @@ stream_ml_housing_lab/
 ├── config/                 # YAML configuration and overrides
 ├── docs/                   # Pipeline and configuration documentation
 ├── src/
+│   ├── api/                # FastAPI application exposing the inference endpoint
 │   ├── config.py           # Config loader with env overrides
 │   ├── data.py             # Dataset loading/splitting helpers
 │   ├── feature_engineering.py  # CLI to fit & persist preprocessing transformers
+│   ├── inference_service.py    # Shared inference + imputation utilities
 │   ├── train.py            # CLI to train model and log artifacts to MLflow
 │   ├── evaluate.py         # CLI to score trained models on hold-out data
 │   ├── predict.py          # CLI to run single predictions with saved pipelines
@@ -72,6 +74,35 @@ training artifacts. The offline workflow also accepts these flags and will casca
 | Offline workflow    | `poetry run offline-train --config config/config.yaml --data-path /path/to/Housing.csv`
 
 See `docs/PIPELINE_OVERVIEW.md` for a deeper walkthrough of the stages and artifact layout.
+
+## FastAPI Inference API
+
+Serve the latest offline-trained model over HTTP with:
+
+```bash
+poetry run serve-api
+```
+
+Environment variables `HOUSING_CONFIG_PATH`, `HOUSING_API_HOST`, and `HOUSING_API_PORT` can override the configuration file location and bind address (default `0.0.0.0:8000`). The `/predict` endpoint accepts a JSON payload with partial feature input; any omitted or `null` fields are imputed from the training statistics that were logged alongside the model. Add an optional `run_id` attribute to pin inference to a specific MLflow run, or omit it to default to the latest training run tagged `stage=training`.
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+        "features": {
+          "area": 7500,
+          "bedrooms": 3,
+          "bathrooms": null,
+          "stories": 2
+        },
+        "run_id": "4010d0beaa3d4203a207cde2f7154a26",
+        "refresh": true
+      }'
+```
+
+The response includes the prediction, which features were auto-filled, and the MLflow run id for traceability. Add `"refresh": true` to the payload to force the server to pull the most recent training artifacts before serving the request (useful if that run was just produced).
 
 ## Configuration
 
