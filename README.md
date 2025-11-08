@@ -97,9 +97,9 @@ curl -X POST http://localhost:8000/predict \
           "bathrooms": null,
           "stories": 2
         },
-        "run_id": "4010d0beaa3d4203a207cde2f7154a26",
+        "run_id": "15639d5fcda24b70a1693a15af9b7a83",
         "refresh": true
-      }'
+      }' | python -m json.tool
 ```
 
 The response includes the prediction, which features were auto-filled, and the MLflow run id for traceability. Add `"refresh": true` to the payload to force the server to pull the most recent training artifacts before serving the request (useful if that run was just produced).
