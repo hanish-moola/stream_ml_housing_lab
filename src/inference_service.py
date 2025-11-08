@@ -11,6 +11,7 @@ import joblib
 import mlflow
 import numpy as np
 import pandas as pd
+from mlflow.tracking import MlflowClient
 
 from .config import ProjectConfig
 from .feature_engineering import FeatureMetadata, TrainingStats
@@ -44,13 +45,21 @@ class InferenceService:
     def __init__(self, config: ProjectConfig) -> None:
         self.config = config
         self._lock = Lock()
-        self._bundle: ModelBundle | None = None
+        self._bundles: Dict[str, ModelBundle] = {}
+        self._last_run_id: str | None = None
+        self._client = MlflowClient()
         mlflow.set_tracking_uri(config.mlflow.tracking_uri)
 
-    def predict(self, payload: Dict[str, Any], *, force_refresh: bool = False) -> PredictionResult:
+    def predict(
+        self,
+        payload: Dict[str, Any],
+        *,
+        run_id: str | None = None,
+        force_refresh: bool = False,
+    ) -> PredictionResult:
         """Run inference against the latest model, imputing missing features."""
 
-        run = self._get_latest_training_run()
+        run = self._get_training_run(run_id)
         bundle = self._ensure_bundle(run, force_refresh=force_refresh)
 
         features_df, imputed_values, ordered_features = _prepare_feature_frame(
@@ -69,13 +78,17 @@ class InferenceService:
         )
 
     def cached_run_id(self) -> str | None:
-        """Return the cached run id, if artifacts have been loaded."""
+        """Return the most recently used cached run id."""
 
-        if self._bundle:
-            return self._bundle.run_id
-        return None
+        return self._last_run_id
 
-    def _get_latest_training_run(self) -> mlflow.entities.Run:
+    def _get_training_run(self, run_id: str | None) -> mlflow.entities.Run:
+        if run_id:
+            try:
+                return self._client.get_run(run_id)
+            except Exception as exc:  # pragma: no cover - surfacing descriptive error
+                raise FileNotFoundError(f"Training run '{run_id}' could not be loaded.") from exc
+
         run = get_latest_run_by_stage(self.config.mlflow.experiment_name, "training")
         if run is None:
             raise FileNotFoundError("No training runs tagged with stage 'training' were found.")
@@ -88,16 +101,24 @@ class InferenceService:
         force_refresh: bool = False,
     ) -> ModelBundle:
         run_id = run.info.run_id
-        if not force_refresh and self._bundle and self._bundle.run_id == run_id:
-            return self._bundle
+        if not force_refresh:
+            cached = self._bundles.get(run_id)
+            if cached:
+                self._last_run_id = run_id
+                return cached
 
         with self._lock:
-            if not force_refresh and self._bundle and self._bundle.run_id == run_id:
-                return self._bundle
+            if not force_refresh:
+                cached = self._bundles.get(run_id)
+                if cached:
+                    self._last_run_id = run_id
+                    return cached
 
             logger.info("Loading artifacts for training run %s", run_id)
-            self._bundle = self._load_bundle(run)
-            return self._bundle
+            bundle = self._load_bundle(run)
+            self._bundles[run_id] = bundle
+            self._last_run_id = run_id
+            return bundle
 
     def _load_bundle(self, run: mlflow.entities.Run) -> ModelBundle:
         run_id = run.info.run_id

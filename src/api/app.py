@@ -28,6 +28,10 @@ app = FastAPI(
 
 class PredictionRequest(BaseModel):
     features: Dict[str, Any] = Field(..., description="Partial or complete feature payload for inference.")
+    run_id: str | None = Field(
+        default=None,
+        description="Optional MLflow run id to pin predictions to a specific model.",
+    )
     refresh: bool = Field(
         default=False,
         description="Force refresh of the cached model artifacts before prediction.",
@@ -54,7 +58,11 @@ def predict(request: PredictionRequest) -> PredictionResponse:
     """Generate a prediction, imputing missing features from training statistics."""
 
     try:
-        result = _SERVICE.predict(request.features, force_refresh=request.refresh)
+        result = _SERVICE.predict(
+            request.features,
+            run_id=request.run_id,
+            force_refresh=request.refresh,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
