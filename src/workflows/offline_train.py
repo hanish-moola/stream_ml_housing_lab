@@ -15,9 +15,7 @@ from ..feature_engineering import run_feature_engineering
 from ..logging_utils import configure_logging, get_logger
 from ..registry import (
     build_run_name,
-    load_metadata,
-    prepare_run_artifacts,
-    write_metadata,
+    get_latest_run_by_stage,
 )
 from ..train import run_training
 from ..evaluate import run_evaluation
@@ -67,38 +65,30 @@ def run_offline_workflow(
         mlflow.log_param("workflow_dataset_path", str(config.data.raw_data_path))
 
         run_feature_engineering(config, run_name=stage_names["feature_engineering"])
+        feature_run = get_latest_run_by_stage(config.mlflow.experiment_name, "feature_engineering")
+
         run_training(config, run_name=stage_names["training"])
-        training_run_dir = config.artifacts.root / stage_names["training"]
+        training_run = get_latest_run_by_stage(config.mlflow.experiment_name, "training")
+
+        training_run_id = training_run.info.run_id if training_run else None
         run_evaluation(
             config,
-            model_run_dir=training_run_dir,
-            run_name=stage_names["evaluation"]
+            model_run_id=training_run_id,
+            run_name=stage_names["evaluation"],
         )
+        evaluation_run = get_latest_run_by_stage(config.mlflow.experiment_name, "evaluation")
 
-        stage_metadata: Dict[str, Dict[str, object]] = {}
-        for stage, name in stage_names.items():
-            metadata_path = config.artifacts.root / name / "metadata.json"
-            if not metadata_path.exists():
-                raise FileNotFoundError(f"Expected metadata for stage '{stage}' at {metadata_path}")
-            stage_metadata[stage] = load_metadata(metadata_path)
-
-        summary_paths = prepare_run_artifacts(config.artifacts, base_run)
         summary = {
             "workflow_run": base_run,
             "dataset_path": str(config.data.raw_data_path),
-            "stages": stage_metadata,
+            "stages": {
+                "feature_engineering": feature_run.info.run_id if feature_run else None,
+                "training": training_run_id,
+                "evaluation": evaluation_run.info.run_id if evaluation_run else None,
+            },
         }
-        write_metadata(summary, summary_paths.metadata_path)
-        mlflow.log_dict(summary, "workflow/summary.json")
-        mlflow.log_params({
-            "feature_run": stage_names["feature_engineering"],
-            "feature_run_id": stage_metadata["feature_engineering"].get("mlflow_run_id"),
-            "training_run": stage_names["training"],
-            "training_run_id": stage_metadata["training"].get("mlflow_run_id"),
-            "evaluation_run": stage_names["evaluation"],
-            "evaluation_run_id": stage_metadata["evaluation"].get("mlflow_run_id"),
-        })
-        logger.info("Offline workflow complete. Summary stored at %s", summary_paths.metadata_path)
+        mlflow.log_dict(summary, "workflow_summary.json")
+        logger.info("Offline workflow complete; summary logged to MLflow")
 
     return summary
 

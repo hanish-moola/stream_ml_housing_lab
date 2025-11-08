@@ -1,0 +1,15 @@
+artifact_uri: /Users/hanish/Desktop/workspace/stream_ml_housing_lab/mlruns/948038285919374803/a44c29aecbc947b58aad9f79fbbf03bc/artifacts
+end_time: null
+entry_point_name: ''
+experiment_id: '948038285919374803'
+lifecycle_stage: active
+run_id: a44c29aecbc947b58aad9f79fbbf03bc
+run_name: run_20251108_194417
+run_uuid: a44c29aecbc947b58aad9f79fbbf03bc
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1762631057635
+status: 1
+tags: []
+user_id: hanish

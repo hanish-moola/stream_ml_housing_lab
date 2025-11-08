@@ -21,9 +21,6 @@ from .logging_utils import configure_logging, get_logger
 from .mlflow_utils import ensure_run
 from .registry import (
     build_run_name,
-    prepare_run_artifacts,
-    save_transformer,
-    write_metadata,
 )
 
 logger = get_logger(__name__)
@@ -155,35 +152,32 @@ def run_feature_engineering(config: ProjectConfig, run_name: Optional[str] = Non
     mlflow.set_experiment(config.mlflow.experiment_name)
 
     effective_run_name = run_name or build_run_name(config.mlflow.run_name_template)
-    artifacts = prepare_run_artifacts(config.artifacts, effective_run_name)
 
     with ensure_run(effective_run_name) as run:
         logger.info("Starting feature engineering run: %s", run.info.run_id)
+        mlflow.set_tag("stage", "feature_engineering")
 
         transformer, feature_metadata, stats = _fit_transformer_and_metadata(config, effective_run_name)
 
-        save_transformer(transformer, artifacts.transformer_path)
+        import tempfile
+        import joblib
 
-        metadata_path = artifacts.run_dir / "feature_metadata.json"
-        stats_path = artifacts.run_dir / "training_stats.json"
-        with metadata_path.open("w", encoding="utf-8") as handle:
-            json.dump(feature_metadata.to_dict(), handle, indent=2)
-        with stats_path.open("w", encoding="utf-8") as handle:
-            json.dump(stats.to_dict(), handle, indent=2)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir) / "transformer.joblib"
+            joblib.dump(transformer, tmp_path)
+            mlflow.log_artifact(str(tmp_path), artifact_path="transformer")
+
+        mlflow.log_dict(feature_metadata.to_dict(), "feature_metadata.json")
+        mlflow.log_dict(stats.to_dict(), "training_stats.json")
+        log_metadata_to_mlflow(feature_metadata, stats)
 
         run_metadata = {
             "run_name": effective_run_name,
             "mlflow_run_id": run.info.run_id,
-            "artifacts": {
-                "transformer": str(artifacts.transformer_path),
-                "feature_metadata": str(metadata_path),
-                "training_stats": str(stats_path),
-            },
         }
-        write_metadata(run_metadata, artifacts.metadata_path)
-        log_metadata_to_mlflow(feature_metadata, stats)
+        mlflow.log_dict(run_metadata, "run_metadata.json")
 
-        logger.info("Feature engineering complete. Artifacts saved under %s", artifacts.run_dir)
+        logger.info("Feature engineering complete and logged to MLflow")
 
 
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:

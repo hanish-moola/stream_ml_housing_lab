@@ -13,4 +13,6 @@
 - Implemented prediction CLI that aligns payloads with saved feature metadata, ensuring inference parity and emitting MLflow prediction logs.
 - Documented pipeline usage and configuration in README + docs/ to guide onboarding for junior engineers.
 - Introduced offline training workflow CLI to orchestrate feature engineering, training, evaluation, and MLflow logging in a single command.
+- Expanded training stack to support neural network models (TensorFlow) and created lazy-loading pipelines for inference parity.
+- Dropped the local `artifacts/` directory in favour of MLflow-managed artifacts; everything now downloads directly from run storage.
 

@@ -20,14 +20,6 @@ class DataConfig:
 
 
 @dataclass(frozen=True)
-class ArtifactsConfig:
-    root: Path
-    transformer_subdir: str = "transformers"
-    model_subdir: str = "models"
-    metrics_subdir: str = "metrics"
-
-
-@dataclass(frozen=True)
 class MLflowConfig:
     experiment_name: str
     tracking_uri: str
@@ -44,7 +36,6 @@ class ModelConfig:
 class ProjectConfig:
     project_name: str
     data: DataConfig
-    artifacts: ArtifactsConfig
     mlflow: MLflowConfig
     model: ModelConfig
 
@@ -101,12 +92,10 @@ def load_config(path: Optional[Path] = None) -> ProjectConfig:
 
     project = raw_config.get("project", {})
     data_cfg = raw_config.get("data", {})
-    artifacts_cfg = raw_config.get("artifacts", {})
     mlflow_cfg = raw_config.get("mlflow", {})
     model_cfg = raw_config.get("model", {})
 
     raw_data_path = Path(os.getenv("HOUSING_DATA_PATH", data_cfg.get("raw_data_path")))
-    artifacts_root = Path(os.getenv("HOUSING_ARTIFACTS_ROOT", artifacts_cfg.get("root")))
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", mlflow_cfg.get("tracking_uri"))
 
     project_config = ProjectConfig(
@@ -117,12 +106,6 @@ def load_config(path: Optional[Path] = None) -> ProjectConfig:
             index_column=data_cfg.get("index_column"),
             test_size=float(data_cfg.get("test_size", 0.2)),
             random_state=int(data_cfg.get("random_state", 42)),
-        ),
-        artifacts=ArtifactsConfig(
-            root=artifacts_root,
-            transformer_subdir=artifacts_cfg.get("transformer_subdir", "transformers"),
-            model_subdir=artifacts_cfg.get("model_subdir", "models"),
-            metrics_subdir=artifacts_cfg.get("metrics_subdir", "metrics"),
         ),
         mlflow=MLflowConfig(
             experiment_name=mlflow_cfg.get("experiment_name", "housing_price_workflow"),

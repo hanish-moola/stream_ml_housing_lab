@@ -1,0 +1,47 @@
+{
+  "numeric_means": {
+    "area": 5154.144495412844,
+    "bedrooms": 2.958715596330275,
+    "bathrooms": 1.2660550458715596,
+    "stories": 1.7821100917431192,
+    "parking": 0.6857798165137615
+  },
+  "numeric_stds": {
+    "area": 2204.313664340267,
+    "bedrooms": 0.7478042658864914,
+    "bathrooms": 0.47739141433443033,
+    "stories": 0.8580925903415505,
+    "parking": 0.8549407922799883
+  },
+  "categorical_levels": {
+    "mainroad": {
+      "yes": 374,
+      "no": 62
+    },
+    "guestroom": {
+      "no": 358,
+      "yes": 78
+    },
+    "basement": {
+      "no": 280,
+      "yes": 156
+    },
+    "hotwaterheating": {
+      "no": 414,
+      "yes": 22
+    },
+    "airconditioning": {
+      "no": 302,
+      "yes": 134
+    },
+    "prefarea": {
+      "no": 334,
+      "yes": 102
+    },
+    "furnishingstatus": {
+      "semi-furnished": 188,
+      "unfurnished": 137,
+      "furnished": 111
+    }
+  }
+}

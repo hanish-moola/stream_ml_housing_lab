@@ -14,7 +14,6 @@ def test_load_config_with_env_overrides(tmp_path, monkeypatch):
         {
             "project": {"name": "demo"},
             "data": {"raw_data_path": "data.csv", "target_column": "price"},
-            "artifacts": {"root": "artifacts"},
             "mlflow": {"experiment_name": "exp", "tracking_uri": "mlruns"},
             "model": {"type": "linear", "hyperparameters": {}},
         },
@@ -23,12 +22,10 @@ def test_load_config_with_env_overrides(tmp_path, monkeypatch):
 
     monkeypatch.setenv("HOUSING_CONFIG_PATH", str(config_path))
     monkeypatch.setenv("HOUSING_DATA_PATH", "/tmp/data.csv")
-    monkeypatch.setenv("HOUSING_ARTIFACTS_ROOT", "/tmp/artifacts")
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "sqlite:///mlruns.db")
 
     cfg = load_config()
 
     assert cfg.data.raw_data_path == Path("/tmp/data.csv")
-    assert cfg.artifacts.root == Path("/tmp/artifacts")
     assert cfg.mlflow.tracking_uri == "sqlite:///mlruns.db"
     assert cfg.project_name == "demo"
