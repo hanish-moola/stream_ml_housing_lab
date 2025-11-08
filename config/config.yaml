@@ -16,17 +16,17 @@ mlflow:
   tracking_uri: "mlruns"
   run_name_template: "run_{timestamp}"
 
-# model:
-#   type: "linear_regression"
-#   hyperparameters: {}
-
-# Example neural network configuration:
 model:
-  type: "neural_network"
-  hyperparameters:
-    hidden_units: [128, 64]
-    activation: relu
-    dropout: 0.1
-    learning_rate: 0.001
-    epochs: 10
-    batch_size: 32
+  type: "linear_regression"
+  hyperparameters: {}
+
+
+# model:
+#   type: "neural_network"
+#   hyperparameters:
+#     hidden_units: [128, 64]
+#     activation: relu
+#     dropout: 0.1
+#     learning_rate: 0.001
+#     epochs: 10
+#     batch_size: 32
