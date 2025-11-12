@@ -16,17 +16,27 @@ mlflow:
   tracking_uri: "mlruns"
   run_name_template: "run_{timestamp}"
 
-# model:
-#   type: "linear_regression"
-#   hyperparameters: {}
-
-
 model:
-  type: "neural_network"
-  hyperparameters:
-    hidden_units: [128, 64]
-    activation: relu
-    dropout: 0.1
-    learning_rate: 0.01
-    epochs: 3
-    batch_size: 64
+  type: "linear_regression"
+  hyperparameters: {}
+  
+# model:
+#   type: "neural_network"
+#   hyperparameters:
+#     hidden_units: [128, 64]
+#     activation: relu
+#     dropout: 0.1
+#     learning_rate: 0.01
+#     epochs: 3
+#     batch_size: 64
+
+streaming:
+  batch_size: 32
+  sleep_interval_seconds: 0.5
+  loop_forever: false
+  max_rows_per_cycle: null
+  checkpoint_path: "data/streaming/checkpoints/state.json"
+  output_dir: "data/stream_outputs"
+  output_format: "jsonl"
+  include_ground_truth: true
+  enable_mlflow_logging: true

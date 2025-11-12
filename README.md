@@ -72,6 +72,7 @@ training artifacts. The offline workflow also accepts these flags and will casca
 | Evaluation          | `poetry run evaluate-model --config config/config.yaml`
 | Prediction          | `poetry run predict-model --config config/config.yaml --features payload.json`
 | Offline workflow    | `poetry run offline-train --config config/config.yaml --data-path /path/to/Housing.csv`
+| Streaming inference | `poetry run stream-infer --config config/config.yaml`
 
 See `docs/PIPELINE_OVERVIEW.md` for a deeper walkthrough of the stages and artifact layout.
 
@@ -103,6 +104,26 @@ curl -X POST http://localhost:8000/predict \
 ```
 
 The response includes the prediction, which features were auto-filled, and the MLflow run id for traceability. Add `"refresh": true` to the payload to force the server to pull the most recent training artifacts before serving the request (useful if that run was just produced).
+
+## Streaming Inference
+
+Use the streaming workflow to continuously read `data/Housing.csv`, drop the `price` target, and emit predictions for each row:
+
+```bash
+poetry run stream-infer --config config/config.yaml
+```
+
+The workflow reuses the latest MLflow training run, writes newline-delimited JSON predictions under `data/stream_outputs/<run_name>/`, and (optionally) logs batch metrics to MLflow. Configuration defaults live under the `streaming` block in `config/config.yaml`:
+
+- `batch_size`: number of rows processed in each inference batch (default `32`)
+- `sleep_interval_seconds`: pause between batches when `loop_forever` is `true`
+- `loop_forever`: restart from the top of the CSV once it finishes
+- `checkpoint_path`: optional offset checkpoint so restarts resume where they left off
+- `output_dir` / `output_format`: file sink location and format (`jsonl` by default)
+- `include_ground_truth`: whether to persist the original `price` alongside predictions
+- `enable_mlflow_logging`: toggle batch metric logging to MLflow
+
+Override any of these by editing the YAML file or supplying an alternate config via `--config`.
 
 ## Configuration
 

@@ -33,6 +33,7 @@ evaluate-model = "src.evaluate:main"
 predict-model = "src.predict:main"
 offline-train = "src.workflows.offline_train:main"
 serve-api = "src.api.app:main"
+stream-infer = "src.workflows.stream_infer:main"
 
 [build-system]
 requires = ["poetry-core>=1.5.0"]

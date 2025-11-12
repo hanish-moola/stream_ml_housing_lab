@@ -33,11 +33,25 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class StreamingConfig:
+    batch_size: int = 32
+    sleep_interval_seconds: float = 0.5
+    loop_forever: bool = False
+    max_rows_per_cycle: Optional[int] = None
+    checkpoint_path: Optional[Path] = None
+    output_dir: Path = Path("data/stream_outputs")
+    output_format: str = "jsonl"
+    include_ground_truth: bool = True
+    enable_mlflow_logging: bool = True
+
+
+@dataclass(frozen=True)
 class ProjectConfig:
     project_name: str
     data: DataConfig
     mlflow: MLflowConfig
     model: ModelConfig
+    streaming: StreamingConfig
 
     def to_dict(self) -> Dict[str, Any]:
         """Return config as a serialisable dictionary."""
@@ -51,12 +65,6 @@ class ProjectConfig:
                 "test_size": self.data.test_size,
                 "random_state": self.data.random_state,
             },
-            "artifacts": {
-                "root": str(self.artifacts.root),
-                "transformer_subdir": self.artifacts.transformer_subdir,
-                "model_subdir": self.artifacts.model_subdir,
-                "metrics_subdir": self.artifacts.metrics_subdir,
-            },
             "mlflow": {
                 "experiment_name": self.mlflow.experiment_name,
                 "tracking_uri": self.mlflow.tracking_uri,
@@ -65,6 +73,17 @@ class ProjectConfig:
             "model": {
                 "type": self.model.type,
                 "hyperparameters": self.model.hyperparameters,
+            },
+            "streaming": {
+                "batch_size": self.streaming.batch_size,
+                "sleep_interval_seconds": self.streaming.sleep_interval_seconds,
+                "loop_forever": self.streaming.loop_forever,
+                "max_rows_per_cycle": self.streaming.max_rows_per_cycle,
+                "checkpoint_path": str(self.streaming.checkpoint_path) if self.streaming.checkpoint_path else None,
+                "output_dir": str(self.streaming.output_dir),
+                "output_format": self.streaming.output_format,
+                "include_ground_truth": self.streaming.include_ground_truth,
+                "enable_mlflow_logging": self.streaming.enable_mlflow_logging,
             },
         }
 
@@ -94,9 +113,13 @@ def load_config(path: Optional[Path] = None) -> ProjectConfig:
     data_cfg = raw_config.get("data", {})
     mlflow_cfg = raw_config.get("mlflow", {})
     model_cfg = raw_config.get("model", {})
+    streaming_cfg = raw_config.get("streaming", {})
 
     raw_data_path = Path(os.getenv("HOUSING_DATA_PATH", data_cfg.get("raw_data_path")))
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", mlflow_cfg.get("tracking_uri"))
+    checkpoint_path = streaming_cfg.get("checkpoint_path")
+    if checkpoint_path:
+        checkpoint_path = Path(checkpoint_path)
 
     project_config = ProjectConfig(
         project_name=project.get("name", "stream-ml-housing-lab"),
@@ -115,6 +138,19 @@ def load_config(path: Optional[Path] = None) -> ProjectConfig:
         model=ModelConfig(
             type=model_cfg.get("type", "linear_regression"),
             hyperparameters=model_cfg.get("hyperparameters", {}),
+        ),
+        streaming=StreamingConfig(
+            batch_size=int(streaming_cfg.get("batch_size", 32)),
+            sleep_interval_seconds=float(streaming_cfg.get("sleep_interval_seconds", 0.5)),
+            loop_forever=bool(streaming_cfg.get("loop_forever", False)),
+            max_rows_per_cycle=(
+                int(streaming_cfg["max_rows_per_cycle"]) if streaming_cfg.get("max_rows_per_cycle") is not None else None
+            ),
+            checkpoint_path=checkpoint_path,
+            output_dir=Path(streaming_cfg.get("output_dir", "data/stream_outputs")),
+            output_format=streaming_cfg.get("output_format", "jsonl"),
+            include_ground_truth=bool(streaming_cfg.get("include_ground_truth", True)),
+            enable_mlflow_logging=bool(streaming_cfg.get("enable_mlflow_logging", True)),
         ),
     )
 
